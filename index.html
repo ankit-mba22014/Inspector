@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Inspector — Scan your fridge, order what's missing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --orange: #E8640C;
+    --orange-light: #FFF0E6;
+    --green: #2D6A4F;
+    --green-light: #E8F5EE;
+    --red: #C0392B;
+    --red-light: #FDEAEA;
+    --amber: #B07A0A;
+    --amber-light: #FEF6E4;
+    --cream: #FDF6EC;
+    --card: #FFFAF4;
+    --ink: #1A0E04;
+    --muted: #7A6555;
+    --border: #EDE0CC;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #1A1208;
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 24px 16px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Top nav */
+  .top-nav {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+  }
+  .brand { font-family: 'Fraunces', serif; font-size: 22px; color: #fff; font-weight: 900; }
+  .brand span { font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 300; color: rgba(255,255,255,0.5); margin-left: 8px; }
+  .swiggy-badge {
+    font-size: 11px; color: rgba(255,255,255,0.5);
+    border: 0.5px solid rgba(255,255,255,0.15);
+    border-radius: 20px; padding: 4px 12px;
+  }
+  .swiggy-badge b { color: #FF6900; font-weight: 500; }
+
+  /* Layout */
+  .layout {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    gap: 28px;
+    align-items: flex-start;
+    justify-content: center;
+  }
+
+  /* Phone */
+  .phone-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .phone {
+    width: 270px;
+    height: 540px;
+    background: var(--cream);
+    border-radius: 38px;
+    border: 2px solid rgba(255,255,255,0.12);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .notch-bar {
+    height: 32px;
+    background: #1A0E04;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    flex-shrink: 0;
+  }
+  .notch-time { font-size: 11px; font-weight: 600; color: #fff; }
+  .notch-icons { font-size: 10px; color: rgba(255,255,255,0.7); }
+  .screen-body {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    background: var(--cream);
+  }
+  .screen-body::-webkit-scrollbar { display: none; }
+
+  /* Header */
+  .app-header {
+    background: var(--orange);
+    padding: 12px 16px 10px;
+    flex-shrink: 0;
+  }
+  .app-header-title { font-family: 'Fraunces', serif; font-size: 19px; color: #fff; font-weight: 900; }
+  .app-header-sub { font-size: 11px; color: rgba(255,255,255,0.75); margin-top: 1px; font-style: italic; }
+
+  .body-pad { padding: 14px; flex: 1; display: flex; flex-direction: column; }
+
+  /* Upload */
+  .upload-zone {
+    border: 1.5px dashed var(--border);
+    border-radius: 14px;
+    padding: 22px 12px;
+    text-align: center;
+    cursor: pointer;
+    background: var(--card);
+    margin-bottom: 14px;
+  }
+  .cam-circle {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--cream); border: 0.5px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 8px;
+  }
+  .cam-circle svg { width: 20px; height: 20px; stroke: var(--muted); fill: none; stroke-width: 1.5; }
+
+  /* Buttons */
+  .btn-orange {
+    display: block; width: 100%;
+    background: var(--orange); color: #fff;
+    border: none; border-radius: 10px;
+    padding: 13px; font-size: 14px; font-weight: 600;
+    cursor: pointer; font-family: 'DM Sans', sans-serif;
+    text-align: center; margin-top: auto;
+  }
+  .btn-green {
+    display: block; width: 100%;
+    background: var(--green); color: #fff;
+    border: none; border-radius: 10px;
+    padding: 12px; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: 'DM Sans', sans-serif;
+    text-align: center;
+  }
+  .btn-ghost {
+    display: block; width: 100%;
+    background: transparent; color: var(--muted);
+    border: 0.5px solid var(--border);
+    border-radius: 10px; padding: 9px;
+    font-size: 12px; cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    text-align: center; margin-top: 7px;
+  }
+
+  /* Item cards */
+  .section-label {
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 0.8px; text-transform: uppercase;
+    margin: 8px 0 5px;
+  }
+  .item-card {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    border-radius: 8px; margin-bottom: 4px;
+    border: 0.5px solid var(--border);
+    background: var(--card);
+  }
+  .item-emoji { font-size: 18px; width: 24px; text-align: center; flex-shrink: 0; }
+  .item-name { font-size: 12px; font-weight: 600; color: var(--ink); flex: 1; }
+  .item-sub { font-size: 10px; color: var(--muted); }
+  .pill {
+    font-size: 10px; padding: 3px 7px;
+    border-radius: 20px; flex-shrink: 0; font-weight: 600;
+  }
+
+  /* Summary */
+  .summary-box {
+    border-left: 2.5px solid var(--orange);
+    padding: 8px 10px;
+    background: var(--amber-light);
+    font-size: 11px; color: var(--ink);
+    line-height: 1.5; margin-bottom: 10px;
+    border-radius: 0 6px 6px 0;
+  }
+
+  /* Spinner */
+  .spinner {
+    width: 32px; height: 32px;
+    border: 2.5px solid var(--border);
+    border-top-color: var(--orange);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin: 0 auto 10px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .scan-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; margin: 6px 0; }
+  .scan-fill { height: 100%; background: var(--orange); border-radius: 2px; animation: scanfill 2s ease-in-out infinite alternate; }
+  @keyframes scanfill { from { width: 15%; } to { width: 88%; } }
+
+  /* Preview */
+  .preview-img-wrap { position: relative; border-radius: 10px; overflow: hidden; margin-bottom: 10px; }
+  .preview-img-wrap img { width: 100%; height: 130px; object-fit: cover; display: block; }
+  .preview-bar {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: rgba(26,14,4,0.5);
+    padding: 6px 10px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .preview-label { font-size: 11px; color: rgba(255,255,255,0.85); }
+  .retake-btn {
+    background: rgba(255,255,255,0.15);
+    border: 0.5px solid rgba(255,255,255,0.3);
+    color: #fff; border-radius: 20px;
+    padding: 3px 10px; font-size: 11px;
+    cursor: pointer; font-family: 'DM Sans', sans-serif;
+  }
+
+  /* Confirm lines */
+  .confirm-row {
+    display: flex; justify-content: space-between;
+    font-size: 11px; color: var(--muted);
+    padding: 4px 0; border-bottom: 0.5px solid var(--border);
+  }
+  .confirm-total {
+    display: flex; justify-content: space-between;
+    font-size: 13px; font-weight: 600; color: var(--ink);
+    padding: 6px 0 2px;
+  }
+
+  /* Success */
+  .success-ring {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: var(--green-light); border: 0.5px solid #97C459;
+    display: flex; align-items: center; justify-content: center;
+    margin: 10px auto 10px;
+  }
+
+  /* Right panel */
+  .right-panel { display: flex; flex-direction: column; gap: 6px; min-width: 175px; padding-top: 32px; }
+  .panel-label { font-size: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+  .step-btn {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px; border-radius: 10px;
+    border: 0.5px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.04);
+    cursor: pointer; text-align: left; width: 100%;
+    font-family: 'DM Sans', sans-serif;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .step-btn:hover { border-color: rgba(232,100,12,0.5); background: rgba(232,100,12,0.06); }
+  .step-btn.active { border-color: var(--orange); background: rgba(232,100,12,0.1); }
+  .step-num {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.4);
+    font-size: 11px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .step-btn.active .step-num { background: var(--orange); color: #fff; }
+  .step-title { font-size: 12px; color: rgba(255,255,255,0.8); font-weight: 500; }
+  .step-sub { font-size: 11px; color: rgba(255,255,255,0.35); }
+
+  /* Nav */
+  .nav-row { display: flex; gap: 8px; width: 270px; }
+  .nav-btn {
+    flex: 1; background: rgba(255,255,255,0.06);
+    border: 0.5px solid rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.6);
+    border-radius: 8px; padding: 8px;
+    font-size: 12px; cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    transition: background 0.15s;
+  }
+  .nav-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+  /* How it works */
+  .how-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+  .how-num {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--orange); color: #fff;
+    font-size: 11px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px;
+  }
+
+  /* Fade */
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  .fade { animation: fadeUp 0.3s ease forwards; }
+
+  /* Fridge illustration */
+  .fridge-illustration { width: 100%; height: 120px; background: var(--card); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+
+  @media (max-width: 600px) {
+    .right-panel { display: none; }
+    .nav-row { width: 100%; }
+    body { padding: 16px 12px 40px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="top-nav">
+  <div class="brand">Inspector <span>by Swiggy MCP</span></div>
+  <div class="swiggy-badge">Built on <b>Swiggy Instamart MCP</b></div>
+</div>
+
+<div class="layout">
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="notch-bar">
+        <span class="notch-time" id="clock">9:41</span>
+        <span class="notch-icons">▲▲▲ WiFi</span>
+      </div>
+      <div class="screen-body" id="screen"></div>
+    </div>
+    <div class="nav-row">
+      <button class="nav-btn" onclick="prev()">‹ Prev</button>
+      <button class="nav-btn" onclick="next()">Next ›</button>
+    </div>
+  </div>
+
+  <div class="right-panel">
+    <div class="panel-label">User flow</div>
+    <button class="step-btn active" id="sb0" onclick="go(0)">
+      <div class="step-num">1</div>
+      <div><div class="step-title">Home</div><div class="step-sub">Upload screen</div></div>
+    </button>
+    <button class="step-btn" id="sb1" onclick="go(1)">
+      <div class="step-num">2</div>
+      <div><div class="step-title">Photo taken</div><div class="step-sub">Preview & confirm</div></div>
+    </button>
+    <button class="step-btn" id="sb2" onclick="go(2)">
+      <div class="step-num">3</div>
+      <div><div class="step-title">Inspecting</div><div class="step-sub">AI scanning</div></div>
+    </button>
+    <button class="step-btn" id="sb3" onclick="go(3)">
+      <div class="step-num">4</div>
+      <div><div class="step-title">Results</div><div class="step-sub">What to order</div></div>
+    </button>
+    <button class="step-btn" id="sb4" onclick="go(4)">
+      <div class="step-num">5</div>
+      <div><div class="step-title">Order review</div><div class="step-sub">Cart & price</div></div>
+    </button>
+    <button class="step-btn" id="sb5" onclick="go(5)">
+      <div class="step-num">6</div>
+      <div><div class="step-title">Success</div><div class="step-sub">Order placed</div></div>
+    </button>
+  </div>
+</div>
+
+<script>
+let cur = 0;
+
+const tick = () => {
+  const n = new Date();
+  document.getElementById('clock').textContent = n.getHours() + ':' + String(n.getMinutes()).padStart(2,'0');
+};
+tick(); setInterval(tick, 30000);
+
+const SCREENS = [
+  // 0 — Home
+  () => `
+    <div class="app-header">
+      <div class="app-header-title">Inspector</div>
+      <div class="app-header-sub">Scan your fridge. Order what's missing.</div>
+    </div>
+    <div class="body-pad">
+      <div class="upload-zone" onclick="go(1)" style="margin-bottom:14px">
+        <div class="cam-circle">
+          <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        </div>
+        <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:3px">Take a photo</div>
+        <div style="font-size:11px;color:var(--muted)">fridge · sabzi basket · shelf</div>
+        <div style="margin-top:10px;display:inline-block;background:var(--orange);color:#fff;border-radius:6px;padding:7px 16px;font-size:12px;font-weight:600">Choose photo</div>
+      </div>
+      <div style="border-top:0.5px solid var(--border);padding-top:12px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">How it works</div>
+        <div class="how-row"><div class="how-num">1</div><div style="font-size:12px;color:var(--ink);line-height:1.4">Photograph your fridge or kitchen</div></div>
+        <div class="how-row"><div class="how-num">2</div><div style="font-size:12px;color:var(--ink);line-height:1.4">AI detects every item and stock level</div></div>
+        <div class="how-row"><div class="how-num">3</div><div style="font-size:12px;color:var(--ink);line-height:1.4">One-tap Instamart order — done</div></div>
+      </div>
+      <div style="text-align:center;margin-top:auto;padding-top:12px;font-size:10px;color:var(--muted)">Powered by Swiggy Instamart MCP</div>
+    </div>`,
+
+  // 1 — Photo taken
+  () => `
+    <div class="app-header">
+      <div class="app-header-title">Inspector</div>
+      <div class="app-header-sub">Review your photo</div>
+    </div>
+    <div class="body-pad">
+      <div class="preview-img-wrap">
+        <svg width="100%" height="130" viewBox="0 0 270 130" xmlns="http://www.w3.org/2000/svg">
+          <rect width="270" height="130" fill="#EDE0CC"/>
+          <rect x="15" y="8" width="240" height="114" rx="6" fill="#D4C5B0" stroke="#C4B09A" stroke-width=".5"/>
+          <rect x="21" y="14" width="228" height="44" rx="4" fill="#FFFAF4" stroke="#EDE0CC" stroke-width=".5"/>
+          <rect x="21" y="62" width="228" height="54" rx="4" fill="#FFFAF4" stroke="#EDE0CC" stroke-width=".5"/>
+          <circle cx="75" cy="36" r="12" fill="#EDE0CC"/>
+          <rect x="96" y="29" width="60" height="14" rx="3" fill="#D4C5B0"/>
+          <circle cx="196" cy="36" r="11" fill="#F0997B"/>
+          <rect x="27" y="68" width="28" height="26" rx="3" fill="#9FE1CB"/>
+          <rect x="61" y="70" width="44" height="22" rx="3" fill="#EDE0CC"/>
+          <rect x="111" y="68" width="36" height="26" rx="3" fill="#FAC775"/>
+          <rect x="153" y="72" width="22" height="22" rx="11" fill="#F5C4B3"/>
+          <rect x="181" y="70" width="52" height="24" rx="3" fill="#D4C5B0"/>
+          <text x="135" y="106" text-anchor="middle" font-size="9" fill="#7A6555" font-family="DM Sans,sans-serif">Your fridge · just now</text>
+        </svg>
+        <div class="preview-bar">
+          <span class="preview-label">Your fridge</span>
+          <button class="retake-btn" onclick="go(0)">Retake</button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">Inspector will scan every visible item — vegetables, dairy, dabbas, packaged goods — and tell you exactly what to order.</div>
+      <button class="btn-orange" onclick="go(2)">Inspect my fridge</button>
+    </div>`,
+
+  // 2 — Scanning
+  () => `
+    <div class="app-header">
+      <div class="app-header-title">Inspector</div>
+      <div class="app-header-sub">Inspecting...</div>
+    </div>
+    <div class="body-pad" style="align-items:center;justify-content:center;text-align:center;gap:0">
+      <svg width="100%" height="110" viewBox="0 0 270 110" style="border-radius:10px;margin-bottom:14px;opacity:.4">
+        <rect width="270" height="110" fill="#EDE0CC"/>
+        <rect x="15" y="6" width="240" height="98" rx="6" fill="#D4C5B0"/>
+        <rect x="21" y="12" width="228" height="38" rx="4" fill="#FFFAF4"/>
+        <rect x="21" y="54" width="228" height="44" rx="4" fill="#FFFAF4"/>
+      </svg>
+      <div class="spinner"></div>
+      <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:6px">Inspecting your fridge...</div>
+      <div class="scan-bar" style="width:150px;margin:0 auto 6px"><div class="scan-fill"></div></div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:16px">Identifying items and stock levels</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">
+        <span style="font-size:10px;background:var(--card);border:0.5px solid var(--border);border-radius:20px;padding:3px 9px;color:var(--muted)">Vegetables</span>
+        <span style="font-size:10px;background:var(--card);border:0.5px solid var(--border);border-radius:20px;padding:3px 9px;color:var(--muted)">Dairy</span>
+        <span style="font-size:10px;background:var(--card);border:0.5px solid var(--border);border-radius:20px;padding:3px 9px;color:var(--muted)">Staples</span>
+        <span style="font-size:10px;background:var(--card);border:0.5px solid var(--border);border-radius:20px;padding:3px 9px;color:var(--muted)">Beverages</span>
+      </div>
+      <button class="btn-orange" onclick="go(3)" style="margin-top:auto">See results →</button>
+    </div>`,
+
+  // 3 — Results
+  () => `
+    <div class="app-header">
+      <div class="app-header-title">Inspector</div>
+      <div class="app-header-sub">Here's what I found</div>
+    </div>
+    <div class="body-pad fade">
+      <div class="summary-box">Pyaaz aur tamatar lagbhag khatam — dahi bhi nahi dikh raha!</div>
+      <div class="section-label" style="color:var(--red)">🚨 Order now · 2 items</div>
+      <div class="item-card">
+        <span class="item-emoji">🧅</span>
+        <div style="flex:1"><div class="item-name">Onions</div><div class="item-sub">Only 1 piece left</div></div>
+        <span class="pill" style="background:var(--red-light);color:var(--red)">1 kg</span>
+      </div>
+      <div class="item-card">
+        <span class="item-emoji">🍅</span>
+        <div style="flex:1"><div class="item-name">Tomatoes</div><div class="item-sub">1 lone tomato visible</div></div>
+        <span class="pill" style="background:var(--red-light);color:var(--red)">500 g</span>
+      </div>
+      <div class="section-label" style="color:var(--amber)">⚠️ Running low · 2 items</div>
+      <div class="item-card">
+        <span class="item-emoji">🥛</span>
+        <div style="flex:1"><div class="item-name">Curd (Amul)</div><div class="item-sub">1–2 days left</div></div>
+        <span class="pill" style="background:var(--amber-light);color:var(--amber)">400 g</span>
+      </div>
+      <div class="item-card">
+        <span class="item-emoji">🧈</span>
+        <div style="flex:1"><div class="item-name">Amul butter</div><div class="item-sub">Nearly finished</div></div>
+        <span class="pill" style="background:var(--amber-light);color:var(--amber)">100 g</span>
+      </div>
+      <div class="section-label" style="color:var(--green)">✅ Well stocked</div>
+      <div class="item-card" style="opacity:.65">
+        <span class="item-emoji">🫙</span>
+        <div style="flex:1"><div class="item-name">Everest masala</div></div>
+        <span class="pill" style="background:var(--green-light);color:var(--green)">Good</span>
+      </div>
+      <button class="btn-green" onclick="go(4)" style="margin-top:10px">Order 4 items on Instamart</button>
+    </div>`,
+
+  // 4 — Order review
+  () => `
+    <div class="app-header">
+      <div class="app-header-title">Inspector</div>
+      <div class="app-header-sub">Review your order</div>
+    </div>
+    <div class="body-pad fade">
+      <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:10px">Order summary</div>
+      <div style="border:0.5px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px">
+        <div class="confirm-row"><span>Onions 1 kg</span><span style="color:var(--ink)">₹29</span></div>
+        <div class="confirm-row"><span>Tomatoes 500 g</span><span style="color:var(--ink)">₹24</span></div>
+        <div class="confirm-row"><span>Amul Curd 400 g</span><span style="color:var(--ink)">₹45</span></div>
+        <div class="confirm-row"><span>Amul Butter 100 g</span><span style="color:var(--ink)">₹55</span></div>
+        <div class="confirm-row" style="border:none"><span>Delivery</span><span style="color:var(--green)">Free</span></div>
+        <div class="confirm-total"><span>Total</span><span>₹153</span></div>
+      </div>
+      <div style="border:0.5px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px">Deliver to</div>
+        <div style="font-size:12px;font-weight:600;color:var(--ink)">14B, Koramangala 5th Block</div>
+        <div style="font-size:11px;color:var(--muted)">Bengaluru · 560095</div>
+      </div>
+      <div style="border:0.5px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Estimated delivery</div>
+        <div style="font-size:13px;font-weight:600;color:var(--ink)">10 – 20 minutes</div>
+      </div>
+      <button class="btn-green" onclick="go(5)">Confirm & place order</button>
+      <button class="btn-ghost" onclick="go(3)">Edit items</button>
+    </div>`,
+
+  // 5 — Success
+  () => `
+    <div class="app-header">
+      <div class="app-header-title">Inspector</div>
+      <div class="app-header-sub">Order placed!</div>
+    </div>
+    <div class="body-pad fade" style="align-items:center;text-align:center">
+      <div class="success-ring">
+        <svg width="26" height="26" viewBox="0 0 24 24" style="stroke:#2D6A4F;fill:none;stroke-width:2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <div style="font-size:17px;font-weight:700;color:var(--green);margin-bottom:4px;font-family:'Fraunces',serif">Order on its way!</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:18px">Instamart rider assigned</div>
+      <div style="border:0.5px solid var(--border);border-radius:10px;padding:12px;width:100%;text-align:left;margin-bottom:10px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">Live tracking</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+          <div style="width:8px;height:8px;border-radius:50%;background:var(--orange);flex-shrink:0;animation:spin 2s linear infinite"></div>
+          <div style="font-size:12px;color:var(--ink)">Rider picking up your order</div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);padding-left:16px">Estimated arrival: 12 – 18 min</div>
+      </div>
+      <div style="border:0.5px solid var(--border);border-radius:10px;padding:12px;width:100%;text-align:left;margin-bottom:18px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px">Order summary</div>
+        <div style="font-size:12px;color:var(--ink)">4 items · ₹153</div>
+        <div style="font-size:11px;color:var(--muted)">Koramangala, Bengaluru</div>
+      </div>
+      <button class="btn-ghost" onclick="go(0)" style="width:100%">Scan another fridge</button>
+    </div>`
+];
+
+function go(n) {
+  cur = n;
+  document.querySelectorAll('.step-btn').forEach((b,i) => b.classList.toggle('active', i === n));
+  document.getElementById('screen').innerHTML = SCREENS[n]();
+}
+
+function next() { go(Math.min(cur + 1, 5)); }
+function prev() { go(Math.max(cur - 1, 0)); }
+
+go(0);
+</script>
+</body>
+</html>
