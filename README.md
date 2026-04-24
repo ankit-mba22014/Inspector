@@ -4,7 +4,7 @@
 
 AI-powered fridge scanner for Indian households. Photo → detect low-stock items → Instamart order in seconds.
 
-**[Live Demo →](https://ankit-mba22014.github.io/inspector)**
+**[Live Demo →](https://ankit-mba22014.github.io/Inspector/)**
 
 To be Built on [Swiggy MCP Builders Club](https://mcp.swiggy.com/builders/)
 
