@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Inspector Cook — WhatsApp Kitchen Bot</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --wa-bg:#0B141A;
+  --wa-header:#202C33;
+  --wa-in:#202C33;
+  --wa-out:#005C4B;
+  --wa-green:#00A884;
+  --wa-green2:#00CF9D;
+  --wa-text:#E9EDEF;
+  --wa-muted:#8696A0;
+  --wa-border:#2A3942;
+  --wa-input:#2A3942;
+  --wa-sum:#1A2C25;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#111;
+  font-family:'DM Sans',sans-serif;
+  min-height:100vh;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:flex-start;
+  padding:24px 16px 48px;
+  -webkit-font-smoothing:antialiased;
+}
+.top-nav{width:100%;max-width:900px;display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.brand{font-family:'Fraunces',serif;font-size:22px;color:#fff;font-weight:900}
+.brand span{font-family:'DM Sans',sans-serif;font-size:12px;font-weight:300;color:rgba(255,255,255,.4);margin-left:8px}
+.swiggy-badge{font-size:11px;color:rgba(255,255,255,.45);border:0.5px solid rgba(255,255,255,.12);border-radius:20px;padding:4px 12px}
+.swiggy-badge b{color:#FF6900;font-weight:500}
+.layout{width:100%;max-width:900px;display:flex;gap:28px;align-items:flex-start;justify-content:center}
+.phone-wrap{display:flex;flex-direction:column;align-items:center;gap:16px}
+.phone{
+  width:270px;height:540px;
+  background:var(--wa-bg);
+  border-radius:38px;
+  border:2px solid rgba(255,255,255,.1);
+  overflow:hidden;
+  display:flex;flex-direction:column;
+  flex-shrink:0;
+}
+.notch{height:30px;background:#000;display:flex;align-items:center;justify-content:space-between;padding:0 18px;flex-shrink:0}
+.notch-time{font-size:11px;font-weight:600;color:#fff}
+.notch-icons{font-size:10px;color:rgba(255,255,255,.7)}
+.screen{flex:1;overflow-y:auto;display:flex;flex-direction:column;background:var(--wa-bg)}
+.screen::-webkit-scrollbar{display:none}
+
+/* WA Header */
+.wa-header{
+  background:var(--wa-header);
+  padding:8px 14px 8px 10px;
+  display:flex;align-items:center;gap:10px;
+  flex-shrink:0;
+  border-bottom:0.5px solid var(--wa-border);
+}
+.wa-avatar{
+  width:34px;height:34px;border-radius:50%;
+  background:var(--wa-green);
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;flex-shrink:0;
+}
+.wa-group-name{font-size:14px;font-weight:500;color:var(--wa-text)}
+.wa-members{font-size:11px;color:var(--wa-muted)}
+.wa-dot{width:7px;height:7px;border-radius:50%;background:var(--wa-green);margin-left:auto;flex-shrink:0}
+
+/* Chat area */
+.chat-area{
+  flex:1;padding:8px 10px;
+  display:flex;flex-direction:column;gap:3px;
+  overflow-y:auto;background:var(--wa-bg);
+}
+.chat-area::-webkit-scrollbar{display:none}
+.date-chip{
+  text-align:center;margin:6px 0;
+}
+.date-chip span{
+  background:rgba(32,44,51,.9);
+  color:var(--wa-muted);font-size:10px;
+  padding:3px 10px;border-radius:7px;
+}
+.msg-row{display:flex;margin-bottom:1px}
+.msg-row.out{justify-content:flex-end}
+.msg-row.in{justify-content:flex-start;align-items:flex-end;gap:5px}
+.msg-avatar{
+  width:22px;height:22px;border-radius:50%;
+  background:var(--wa-border);
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;flex-shrink:0;margin-bottom:2px;
+}
+.bubble{
+  max-width:78%;padding:7px 9px 5px;
+  border-radius:8px;
+  position:relative;
+}
+.bubble.in{background:var(--wa-in);border-radius:2px 8px 8px 8px}
+.bubble.out{background:var(--wa-out);border-radius:8px 2px 8px 8px}
+.bubble-sender{font-size:10px;font-weight:600;margin-bottom:2px}
+.bubble-text{font-size:12px;color:var(--wa-text);line-height:1.4;word-break:break-word}
+.bubble-time{font-size:10px;color:var(--wa-muted);text-align:right;margin-top:2px}
+.bubble-time.out::after{content:' ✓✓';color:var(--wa-green2)}
+
+/* Summary card bubble */
+.sum-bubble{
+  background:var(--wa-sum);
+  border:1px solid var(--wa-green);
+  border-radius:10px;
+  overflow:hidden;
+  margin:6px 8px;
+}
+.sum-header{
+  background:var(--wa-green);
+  padding:8px 12px;
+  display:flex;align-items:center;gap:8px;
+}
+.sum-header-text{font-size:12px;font-weight:600;color:#000}
+.sum-header-sub{font-size:10px;color:rgba(0,0,0,.6)}
+.sum-body{padding:10px 12px}
+.sum-section{font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;margin:8px 0 5px}
+.sum-item{
+  display:flex;align-items:center;gap:7px;
+  padding:5px 8px;border-radius:6px;margin-bottom:3px;
+}
+.sum-item-emoji{font-size:14px;width:20px;text-align:center;flex-shrink:0}
+.sum-item-name{font-size:11px;font-weight:500;flex:1}
+.sum-item-qty{font-size:10px;padding:2px 6px;border-radius:20px;font-weight:600;flex-shrink:0}
+.sum-total{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:7px 8px;
+  background:rgba(0,168,132,.12);
+  border-radius:6px;margin-top:8px;margin-bottom:10px;
+}
+.sum-total-label{font-size:11px;color:var(--wa-muted)}
+.sum-total-val{font-size:14px;font-weight:700;color:var(--wa-green)}
+.confirm-btn{
+  width:100%;background:var(--wa-green);
+  border:none;border-radius:8px;
+  padding:11px;font-size:13px;font-weight:700;
+  cursor:pointer;font-family:'DM Sans',sans-serif;
+  color:#000;display:flex;align-items:center;justify-content:center;gap:6px;
+}
+.confirmed-box{
+  background:rgba(0,168,132,.15);
+  border-radius:8px;padding:10px;text-align:center;
+}
+.confirmed-title{font-size:13px;font-weight:700;color:var(--wa-green);margin-bottom:2px}
+.confirmed-sub{font-size:11px;color:var(--wa-muted)}
+
+/* WA input bar */
+.wa-input{
+  background:var(--wa-header);
+  padding:8px 10px;
+  display:flex;align-items:center;gap:8px;
+  flex-shrink:0;border-top:0.5px solid var(--wa-border);
+}
+.wa-input-field{
+  flex:1;background:var(--wa-input);
+  border:none;border-radius:20px;
+  padding:8px 14px;font-size:12px;
+  color:var(--wa-text);font-family:'DM Sans',sans-serif;
+  outline:none;
+}
+.wa-send{
+  width:36px;height:36px;border-radius:50%;
+  background:var(--wa-green);border:none;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:16px;flex-shrink:0;
+}
+
+/* Intro screen */
+.intro-body{
+  flex:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  padding:20px 16px;text-align:center;
+  background:var(--wa-bg);
+}
+.intro-icon{
+  width:60px;height:60px;border-radius:50%;
+  background:var(--wa-green);
+  display:flex;align-items:center;justify-content:center;
+  font-size:28px;margin-bottom:14px;
+}
+.intro-title{font-size:15px;font-weight:600;color:var(--wa-text);margin-bottom:6px}
+.intro-desc{font-size:12px;color:var(--wa-muted);line-height:1.6;margin-bottom:18px}
+.member-row{
+  width:100%;background:rgba(255,255,255,.04);
+  border:0.5px solid var(--wa-border);
+  border-radius:10px;padding:10px 12px;
+  margin-bottom:8px;text-align:left;
+}
+.member-name{font-size:12px;font-weight:500;color:var(--wa-text);margin-bottom:1px}
+.member-role{font-size:11px;color:var(--wa-muted)}
+.intro-btn{
+  width:100%;background:var(--wa-green);
+  border:none;border-radius:10px;padding:12px;
+  font-size:13px;font-weight:700;color:#000;
+  cursor:pointer;font-family:'DM Sans',sans-serif;
+  margin-top:6px;
+}
+
+/* Right panel */
+.right-panel{display:flex;flex-direction:column;gap:6px;min-width:175px;padding-top:32px}
+.panel-label{font-size:10px;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px}
+.step-btn{
+  display:flex;align-items:center;gap:10px;
+  padding:9px 12px;border-radius:10px;
+  border:0.5px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.03);
+  cursor:pointer;text-align:left;width:100%;
+  font-family:'DM Sans',sans-serif;
+  transition:border-color .15s,background .15s;
+}
+.step-btn:hover{border-color:rgba(0,168,132,.4);background:rgba(0,168,132,.06)}
+.step-btn.active{border-color:var(--wa-green);background:rgba(0,168,132,.1)}
+.step-num{
+  width:22px;height:22px;border-radius:50%;
+  background:rgba(255,255,255,.07);
+  color:rgba(255,255,255,.35);
+  font-size:11px;font-weight:600;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+.step-btn.active .step-num{background:var(--wa-green);color:#000}
+.step-title{font-size:12px;color:rgba(255,255,255,.8);font-weight:500}
+.step-sub{font-size:11px;color:rgba(255,255,255,.3)}
+.nav-row{display:flex;gap:8px;width:270px}
+.nav-btn{
+  flex:1;background:rgba(255,255,255,.05);
+  border:0.5px solid rgba(255,255,255,.1);
+  color:rgba(255,255,255,.55);
+  border-radius:8px;padding:8px;
+  font-size:12px;cursor:pointer;
+  font-family:'DM Sans',sans-serif;transition:background .15s;
+}
+.nav-btn:hover{background:rgba(255,255,255,.1);color:#fff}
+
+/* Typing indicator */
+.typing{display:flex;align-items:center;gap:3px;padding:8px 10px}
+.typing-dot{width:6px;height:6px;border-radius:50%;background:var(--wa-muted)}
+.typing-dot:nth-child(1){animation:ty .9s .0s infinite}
+.typing-dot:nth-child(2){animation:ty .9s .2s infinite}
+.typing-dot:nth-child(3){animation:ty .9s .4s infinite}
+@keyframes ty{0%,80%,100%{transform:scale(1);opacity:.5}40%{transform:scale(1.3);opacity:1}}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.fade{animation:fadeUp .3s ease forwards}
+
+@media(max-width:600px){.right-panel{display:none}.nav-row{width:100%}body{padding:16px 12px 40px}}
+</style>
+</head>
+<body>
+
+<div class="top-nav">
+  <div class="brand">Inspector <span>Cook</span></div>
+  <div class="swiggy-badge">Built on <b>Swiggy Instamart MCP</b></div>
+</div>
+
+<div class="layout">
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="notch">
+        <span class="notch-time" id="clock">9:41</span>
+        <span class="notch-icons">▲▲▲ WiFi</span>
+      </div>
+      <div class="screen" id="screen"></div>
+    </div>
+    <div class="nav-row">
+      <button class="nav-btn" onclick="prev()">‹ Prev</button>
+      <button class="nav-btn" onclick="next()">Next ›</button>
+    </div>
+  </div>
+
+  <div class="right-panel">
+    <div class="panel-label">User flow</div>
+    <button class="step-btn active" id="sb0" onclick="go(0)">
+      <div class="step-num">1</div>
+      <div><div class="step-title">Group setup</div><div class="step-sub">Kitchen WhatsApp group</div></div>
+    </button>
+    <button class="step-btn" id="sb1" onclick="go(1)">
+      <div class="step-num">2</div>
+      <div><div class="step-title">Morning</div><div class="step-sub">Cook's first messages</div></div>
+    </button>
+    <button class="step-btn" id="sb2" onclick="go(2)">
+      <div class="step-num">3</div>
+      <div><div class="step-title">Afternoon</div><div class="step-sub">More updates, menu hint</div></div>
+    </button>
+    <button class="step-btn" id="sb3" onclick="go(3)">
+      <div class="step-num">4</div>
+      <div><div class="step-title">6pm trigger</div><div class="step-sub">AI summarising</div></div>
+    </button>
+    <button class="step-btn" id="sb4" onclick="go(4)">
+      <div class="step-num">5</div>
+      <div><div class="step-title">Order summary</div><div class="step-sub">Confirm with one tap</div></div>
+    </button>
+    <button class="step-btn" id="sb5" onclick="go(5)">
+      <div class="step-num">6</div>
+      <div><div class="step-title">Order placed</div><div class="step-sub">Instamart on the way</div></div>
+    </button>
+  </div>
+</div>
+
+<script>
+let cur = 0;
+const tick=()=>{const n=new Date();document.getElementById('clock').textContent=n.getHours()+':'+String(n.getMinutes()).padStart(2,'0')};
+tick();setInterval(tick,30000);
+
+const bubble=(text,type,sender,color,time,avatar)=>`
+<div class="msg-row ${type}">
+  ${type==='in'?`<div class="msg-avatar" style="background:${color||'#2A3942'}">${avatar||'👤'}</div>`:''}
+  <div class="bubble ${type}">
+    ${type==='in'?`<div class="bubble-sender" style="color:${color}">${sender}</div>`:''}
+    <div class="bubble-text">${text}</div>
+    <div class="bubble-time ${type}">${time}</div>
+  </div>
+</div>`;
+
+const dateChip=d=>`<div class="date-chip"><span>${d}</span></div>`;
+
+const waHeader=`
+<div class="wa-header">
+  <div class="wa-avatar">🍳</div>
+  <div style="flex:1">
+    <div class="wa-group-name">🏠 Ghar ka Kirana</div>
+    <div class="wa-members">Ramu Kaka, Sunita Ji, Inspector AI</div>
+  </div>
+  <div class="wa-dot"></div>
+</div>`;
+
+const waInputBar=`
+<div class="wa-input">
+  <div class="wa-input-field" style="color:rgba(134,150,160,.5)">Message</div>
+  <div class="wa-send">🎤</div>
+</div>`;
+
+const SCREENS=[
+  // 0 — Intro
+  ()=>`
+    ${waHeader}
+    <div class="intro-body">
+      <div class="intro-icon">🤖</div>
+      <div class="intro-title">Inspector Cook</div>
+      <div class="intro-desc">Your cook messages what's running low in Hinglish all day. At 6pm, AI reads everything and places the Instamart order automatically.</div>
+      <div class="member-row">
+        <div class="member-name">👨‍🍳 Ramu Kaka</div>
+        <div class="member-role">Cook — messages through the day</div>
+      </div>
+      <div class="member-row">
+        <div class="member-name">👩 Sunita Ji</div>
+        <div class="member-role">Owner — confirms the order</div>
+      </div>
+      <div class="member-row">
+        <div class="member-name">🤖 Inspector AI</div>
+        <div class="member-role">Reads all messages, orders at 6pm</div>
+      </div>
+      <button class="intro-btn" onclick="go(1)">See how it works →</button>
+    </div>`,
+
+  // 1 — Morning
+  ()=>`
+    ${waHeader}
+    <div class="chat-area fade">
+      ${dateChip('Today')}
+      ${bubble('Memsaab, atta bilkul khatam ho gaya 🙏','in','Ramu Kaka','#FF6B6B','9:12','👨‍🍳')}
+      ${bubble('Ok ok, aur kuch chahiye?','out','','','9:15')}
+      ${bubble('Pyaaz bhi 2-3 hi bache hain','in','Ramu Kaka','#FF6B6B','9:17','👨‍🍳')}
+      ${bubble('Dahi bhi khatam ho gaya kal raat ko','in','Ramu Kaka','#FF6B6B','9:18','👨‍🍳')}
+      ${bubble('Theek hai, Inspector AI sham ko order kar dega 👍','out','','','9:20')}
+      <div class="msg-row in">
+        <div class="msg-avatar" style="background:var(--wa-green)">🤖</div>
+        <div class="bubble in">
+          <div class="bubble-sender" style="color:var(--wa-green)">Inspector AI</div>
+          <div class="bubble-text">✅ Noted — Atta, Pyaaz, Dahi. Shaam 6 baje order place kar deta hoon.</div>
+          <div class="bubble-time in">9:20</div>
+        </div>
+      </div>
+    </div>
+    ${waInputBar}`,
+
+  // 2 — Afternoon
+  ()=>`
+    ${waHeader}
+    <div class="chat-area fade">
+      ${dateChip('Today')}
+      ${bubble('Memsaab, atta bilkul khatam ho gaya 🙏','in','Ramu Kaka','#FF6B6B','9:12','👨‍🍳')}
+      ${bubble('Dahi bhi khatam ho gaya','in','Ramu Kaka','#FF6B6B','9:18','👨‍🍳')}
+      <div class="msg-row in">
+        <div class="msg-avatar" style="background:var(--wa-green)">🤖</div>
+        <div class="bubble in">
+          <div class="bubble-sender" style="color:var(--wa-green)">Inspector AI</div>
+          <div class="bubble-text">✅ Noted — Atta, Pyaaz, Dahi. Shaam 6 baje order kar deta hoon.</div>
+          <div class="bubble-time in">9:20</div>
+        </div>
+      </div>
+      ${bubble('Ek kaam aur — kal Sunday hai, poori banani hai toh maida bhi lena','out','','','10:30')}
+      ${bubble('Haan memsaab, aur ghee bhi khatam hone wala hai','in','Ramu Kaka','#FF6B6B','11:45','👨‍🍳')}
+      ${bubble('Kitchen wala sabun bhi le lena','in','Ramu Kaka','#FF6B6B','14:22','👨‍🍳')}
+      <div class="msg-row in">
+        <div class="msg-avatar" style="background:var(--wa-green)">🤖</div>
+        <div class="bubble in">
+          <div class="bubble-sender" style="color:var(--wa-green)">Inspector AI</div>
+          <div class="bubble-text">✅ Updated list — Atta, Pyaaz, Dahi, Maida, Ghee, Sabun. Shaam 6 baje order hoga.</div>
+          <div class="bubble-time in">14:23</div>
+        </div>
+      </div>
+    </div>
+    ${waInputBar}`,
+
+  // 3 — 6pm trigger
+  ()=>`
+    ${waHeader}
+    <div class="chat-area fade">
+      ${dateChip('Today')}
+      ${bubble('Memsaab, atta bilkul khatam ho gaya 🙏','in','Ramu Kaka','#FF6B6B','9:12','👨‍🍳')}
+      ${bubble('Dahi bhi khatam ho gaya','in','Ramu Kaka','#FF6B6B','9:18','👨‍🍳')}
+      ${bubble('Kal poori banani hai toh maida bhi lena','out','','','10:30')}
+      ${bubble('Ghee bhi khatam hone wala hai','in','Ramu Kaka','#FF6B6B','11:45','👨‍🍳')}
+      ${bubble('Kitchen wala sabun bhi le lena','in','Ramu Kaka','#FF6B6B','14:22','👨‍🍳')}
+      <div class="date-chip"><span>6:00 PM — Daily Order Time</span></div>
+      <div class="msg-row in">
+        <div class="msg-avatar" style="background:var(--wa-green)">🤖</div>
+        <div class="bubble in">
+          <div class="bubble-sender" style="color:var(--wa-green)">Inspector AI</div>
+          <div class="bubble-text" style="display:flex;align-items:center;gap:8px">
+            <div style="display:flex;gap:3px;align-items:center">
+              <div class="typing-dot"></div>
+              <div class="typing-dot"></div>
+              <div class="typing-dot"></div>
+            </div>
+            <span>Aaj ki baatein padh raha hoon...</span>
+          </div>
+          <div class="bubble-time in">18:00</div>
+        </div>
+      </div>
+    </div>
+    ${waInputBar}`,
+
+  // 4 — Summary card
+  ()=>`
+    ${waHeader}
+    <div class="chat-area fade">
+      ${dateChip('Today')}
+      ${bubble('Memsaab, atta bilkul khatam ho gaya 🙏','in','Ramu Kaka','#FF6B6B','9:12','👨‍🍳')}
+      ${bubble('Ghee bhi khatam hone wala hai','in','Ramu Kaka','#FF6B6B','11:45','👨‍🍳')}
+      ${bubble('Kitchen wala sabun bhi le lena','in','Ramu Kaka','#FF6B6B','14:22','👨‍🍳')}
+      <div class="date-chip"><span>6:00 PM — Daily Order Time</span></div>
+      <div class="msg-row in" style="align-items:flex-start">
+        <div class="msg-avatar" style="background:var(--wa-green);margin-top:4px">🤖</div>
+        <div style="flex:1;max-width:90%">
+          <div class="sum-bubble">
+            <div class="sum-header">
+              <div>
+                <div class="sum-header-text">Inspector AI — Shaam ka Order</div>
+                <div class="sum-header-sub">6:00 PM • Aaj ki baatein padhi</div>
+              </div>
+            </div>
+            <div class="sum-body">
+              <div style="font-size:11px;color:var(--wa-muted);font-style:italic;margin-bottom:8px">Ramu Kaka ne aaj bahut kuch bataya — yeh raha aaj ka order 👇</div>
+              <div class="sum-section" style="color:#F09595">🚨 Zaroor Chahiye</div>
+              <div class="sum-item" style="background:rgba(242,75,74,.1)">
+                <span class="sum-item-emoji">🌾</span>
+                <span class="sum-item-name" style="color:var(--wa-text)">Atta</span>
+                <span class="sum-item-qty" style="background:rgba(242,75,74,.2);color:#F09595">5 kg</span>
+              </div>
+              <div class="sum-item" style="background:rgba(242,75,74,.1)">
+                <span class="sum-item-emoji">🥛</span>
+                <span class="sum-item-name" style="color:var(--wa-text)">Dahi</span>
+                <span class="sum-item-qty" style="background:rgba(242,75,74,.2);color:#F09595">500 g</span>
+              </div>
+              <div class="sum-section" style="color:#FAC775">⚠️ Khatam Hone Wala</div>
+              <div class="sum-item" style="background:rgba(250,199,117,.08)">
+                <span class="sum-item-emoji">🧅</span>
+                <span class="sum-item-name" style="color:var(--wa-text)">Pyaaz</span>
+                <span class="sum-item-qty" style="background:rgba(250,199,117,.15);color:#FAC775">1 kg</span>
+              </div>
+              <div class="sum-item" style="background:rgba(250,199,117,.08)">
+                <span class="sum-item-emoji">🫙</span>
+                <span class="sum-item-name" style="color:var(--wa-text)">Ghee</span>
+                <span class="sum-item-qty" style="background:rgba(250,199,117,.15);color:#FAC775">500 g</span>
+              </div>
+              <div class="sum-item" style="background:rgba(250,199,117,.08)">
+                <span class="sum-item-emoji">🍞</span>
+                <span class="sum-item-name" style="color:var(--wa-text)">Maida</span>
+                <span class="sum-item-qty" style="background:rgba(250,199,117,.15);color:#FAC775">1 kg</span>
+              </div>
+              <div class="sum-total">
+                <span class="sum-total-label">Estimated total</span>
+                <span class="sum-total-val">₹387</span>
+              </div>
+              <button class="confirm-btn" onclick="go(5)">✅ Haan, Order Karo!</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    ${waInputBar}`,
+
+  // 5 — Success
+  ()=>`
+    ${waHeader}
+    <div class="chat-area fade">
+      ${dateChip('Today')}
+      ${bubble('Memsaab, atta bilkul khatam ho gaya 🙏','in','Ramu Kaka','#FF6B6B','9:12','👨‍🍳')}
+      ${bubble('Ghee bhi khatam hone wala hai','in','Ramu Kaka','#FF6B6B','11:45','👨‍🍳')}
+      <div class="date-chip"><span>6:00 PM — Daily Order Time</span></div>
+      <div class="msg-row in" style="align-items:flex-start">
+        <div class="msg-avatar" style="background:var(--wa-green);margin-top:4px">🤖</div>
+        <div style="flex:1;max-width:90%">
+          <div class="sum-bubble">
+            <div class="sum-header">
+              <div>
+                <div class="sum-header-text">Inspector AI — Shaam ka Order</div>
+                <div class="sum-header-sub">6:00 PM • Confirmed</div>
+              </div>
+            </div>
+            <div class="sum-body">
+              <div class="confirmed-box">
+                <div class="confirmed-title">🎉 Order Placed on Instamart!</div>
+                <div class="confirmed-sub">5 items · ₹387 · Delivery in 10–20 min</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      ${bubble('✅ Haan, Order Karo!','out','','','18:02')}
+      <div class="msg-row in">
+        <div class="msg-avatar" style="background:var(--wa-green)">🤖</div>
+        <div class="bubble in">
+          <div class="bubble-sender" style="color:var(--wa-green)">Inspector AI</div>
+          <div class="bubble-text">🛵 Order placed! Instamart rider assigned. Delivery in 10–20 minutes to your address. Kal ke liye bhi batate rehna Ramu Kaka! 🙏</div>
+          <div class="bubble-time in">18:02</div>
+        </div>
+      </div>
+      ${bubble('Bahut accha! Shukriya 🙏','in','Ramu Kaka','#FF6B6B','18:03','👨‍🍳')}
+    </div>
+    ${waInputBar}`
+];
+
+function go(n){
+  cur=n;
+  document.querySelectorAll('.step-btn').forEach((b,i)=>b.classList.toggle('active',i===n));
+  document.getElementById('screen').innerHTML=SCREENS[n]();
+  document.getElementById('screen').scrollTop=9999;
+}
+function next(){go(Math.min(cur+1,5))}
+function prev(){go(Math.max(cur-1,0))}
+go(0);
+</script>
+</body>
+</html>
