@@ -252,14 +252,9 @@ export default function CartPage() {
 
       setAwaiting({ ...data.order, qrDataUrl: data.qrDataUrl, qrImage: data.qrImage });
 
-      // bridgeUrl opens Swiggy's own payment page — a scannable QR on desktop,
-      // a tap-to-open-your-UPI-app button on mobile. On a phone we can send
-      // them straight there; on desktop they need the QR on screen, so we
-      // show the link rather than navigating away.
-      if (isMobile && data.order.bridgeUrl) {
-        window.location.href = data.order.bridgeUrl;
-      }
-
+      // iOS only allows app-scheme navigation from a direct tap, so we can't
+      // redirect here — render a real anchor on the awaiting-payment screen
+      // and let the user tap it themselves.
       pollPayment(data.order);
     } catch (err) {
       setError(err.message);
@@ -377,10 +372,23 @@ export default function CartPage() {
                           style={{
                             display: 'block', background: T.orange, color: '#fff',
                             borderRadius: 10, padding: '14px', fontSize: 15, fontWeight: 700,
-                            textDecoration: 'none', marginBottom: 16,
+                            textDecoration: 'none', marginBottom: 12,
                           }}
                         >
-                          Open {selectedPayment?.label || 'your UPI app'}
+                          Pay ₹{cart?.total} in {selectedPayment?.label || 'your UPI app'}
+                        </a>
+                      )}
+                      {awaiting.bridgeUrl && (
+                        <a
+                          href={awaiting.bridgeUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: 'block', color: T.muted, fontSize: 13, fontWeight: 600,
+                            textDecoration: 'underline', marginBottom: 16,
+                          }}
+                        >
+                          Didn't open? Pay on Swiggy's page
                         </a>
                       )}
                     </>
