@@ -73,19 +73,29 @@ export default function Home() {
   }, []);
 
   // ---- Speak to order ----
+  // Primary: record with MediaRecorder, transcribe via Sarvam (server-side).
+  // Fallback: the browser's own SpeechRecognition, used whenever Sarvam is
+  // unsupported, unavailable, out of credits, or otherwise fails.
   const [voiceSupported, setVoiceSupported] = useState(false);
-  const [voiceState, setVoiceState] = useState('idle');   // idle | listening | parsing | review | error
+  const [voiceState, setVoiceState] = useState('idle');   // idle | recording | transcribing | listening | parsing | review | error
   const [transcript, setTranscript] = useState('');
+  const [listeningNotice, setListeningNotice] = useState(null);
   const [voiceItems, setVoiceItems] = useState([]);
   const [voiceError, setVoiceError] = useState(null);
   const recognitionRef = useRef(null);
   const stoppedByUserRef = useRef(false);   // true once the user taps Done/Cancel
+  const mediaRecorderRef = useRef(null);
+  const mediaStreamRef = useRef(null);
 
   useEffect(() => {
-    setVoiceSupported(!!(window.SpeechRecognition || window.webkitSpeechRecognition));
+    const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    const hasMediaRecorder = !!(window.MediaRecorder && navigator.mediaDevices?.getUserMedia);
+    setVoiceSupported(hasSpeechRecognition || hasMediaRecorder);
     return () => {
       stoppedByUserRef.current = true;
       recognitionRef.current?.stop();
+      mediaRecorderRef.current?.stop();
+      mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
@@ -121,7 +131,7 @@ export default function Home() {
   const FATAL_SPEECH_ERRORS = new Set(['not-allowed', 'service-not-allowed', 'audio-capture']);
   const MAX_RESTARTS = 6;
 
-  const startListening = () => {
+  const startListening = (notice = null) => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
 
@@ -181,6 +191,7 @@ export default function Home() {
     recognitionRef.current = recognition;
     setTranscript('');
     setVoiceError(null);
+    setListeningNotice(notice);
     setVoiceState('listening');
     recognition.start();
   };
@@ -190,11 +201,68 @@ export default function Home() {
     recognitionRef.current?.stop();
   };
 
+  // Sarvam is a batch endpoint (send a clip, get one transcript back) — no
+  // live captions here, unlike the SpeechRecognition fallback below.
+  const startRecording = async () => {
+    if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) {
+      startListening();   // no MediaRecorder support — go straight to the fallback
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      const recorder = new MediaRecorder(stream);
+      const chunks = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        mediaStreamRef.current = null;
+        transcribeWithSarvam(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+      };
+
+      mediaRecorderRef.current = recorder;
+      setVoiceError(null);
+      setVoiceState('recording');
+      recorder.start();
+    } catch {
+      // Mic permission denied or unavailable — try the fallback, which will
+      // surface its own permission error if that's blocked too.
+      startListening();
+    }
+  };
+
+  const stopRecording = () => mediaRecorderRef.current?.stop();
+
+  const transcribeWithSarvam = async (blob) => {
+    setVoiceState('transcribing');
+    try {
+      const form = new FormData();
+      form.append('audio', blob, 'voice-order.webm');
+      const res = await fetch('/api/voice-transcribe', { method: 'POST', body: form });
+      const data = await res.json();
+      if (res.status === 401) { router.push('/welcome'); return; }
+
+      if (!res.ok || data.fallback || !data.transcript) {
+        startListening("Switched to your device's voice recognition — say that again.");
+        return;
+      }
+      parseTranscript(data.transcript);
+    } catch {
+      startListening("Switched to your device's voice recognition — say that again.");
+    }
+  };
+
   const resetVoice = () => {
     stoppedByUserRef.current = true;
     recognitionRef.current?.stop();
+    mediaRecorderRef.current?.stop();
+    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
     setVoiceState('idle');
     setTranscript('');
+    setListeningNotice(null);
     setVoiceItems([]);
     setVoiceError(null);
   };
@@ -341,6 +409,35 @@ export default function Home() {
 
           {voiceState !== 'idle' ? (
             <div style={{ textAlign: 'center', padding: '4px 0' }}>
+              {voiceState === 'recording' && (
+                <>
+                  <div style={{
+                    width: 54, height: 54, borderRadius: '50%', background: T.orangeSoft,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    margin: '0 auto 16px', fontSize: 24,
+                  }}>
+                    <span style={{ animation: 'insPulse 1.2s ease-in-out infinite' }}>🎤</span>
+                  </div>
+                  <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 4px' }}>
+                    Listening…
+                  </p>
+                  <p style={{ color: T.muted, fontSize: 14, lineHeight: 1.5, margin: '0 0 20px', padding: '0 8px' }}>
+                    Say what you need — "add milk, onions and two kilos of tomatoes"
+                  </p>
+                  <style>{`@keyframes insPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }`}</style>
+                  <button onClick={stopRecording} style={shell.primaryBtn}>Done</button>
+                  <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                    Cancel
+                  </button>
+                </>
+              )}
+
+              {voiceState === 'transcribing' && (
+                <div style={{ padding: '32px 0', color: T.muted, fontSize: 14 }}>
+                  Transcribing…
+                </div>
+              )}
+
               {voiceState === 'listening' && (
                 <>
                   <div style={{
@@ -353,6 +450,11 @@ export default function Home() {
                   <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 4px' }}>
                     Listening…
                   </p>
+                  {listeningNotice && (
+                    <p style={{ color: T.orangeDeep, fontSize: 12, fontWeight: 600, margin: '0 0 8px' }}>
+                      {listeningNotice}
+                    </p>
+                  )}
                   <p style={{
                     color: transcript ? T.inkSoft : T.muted, fontSize: 14, lineHeight: 1.5,
                     minHeight: 42, margin: '0 0 20px', padding: '0 8px',
@@ -378,7 +480,7 @@ export default function Home() {
                   <div style={{ background: T.redSoft, color: T.red, padding: '12px 14px', borderRadius: 10, marginBottom: 16, fontSize: 13, lineHeight: 1.5, textAlign: 'left' }}>
                     {voiceError}
                   </div>
-                  <button onClick={startListening} style={shell.primaryBtn}>Try again</button>
+                  <button onClick={startRecording} style={shell.primaryBtn}>Try again</button>
                   <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
                     Back to scan
                   </button>
@@ -408,7 +510,7 @@ export default function Home() {
                   <button onClick={confirmVoiceOrder} style={{ ...shell.successBtn, marginTop: 14 }}>
                     Order {voiceItems.length} {voiceItems.length === 1 ? 'item' : 'items'} on Instamart
                   </button>
-                  <button onClick={startListening} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                  <button onClick={startRecording} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
                     That's not quite right — try again
                   </button>
                   <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
@@ -451,7 +553,7 @@ export default function Home() {
                 <>
                   <div style={{ textAlign: 'center', color: T.muted, fontSize: 12, margin: '16px 0' }}>or</div>
                   <button
-                    onClick={startListening}
+                    onClick={startRecording}
                     style={{
                       width: '100%', background: '#fff', color: T.orange,
                       border: `1.5px solid ${T.orange}`, borderRadius: 10,
