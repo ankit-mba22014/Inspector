@@ -86,6 +86,7 @@ export default function Home() {
   const stoppedByUserRef = useRef(false);   // true once the user taps Done/Cancel
   const mediaRecorderRef = useRef(null);
   const mediaStreamRef = useRef(null);
+  const appendRef = useRef(false);   // true when "add more" was tapped from the review screen
 
   useEffect(() => {
     const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -100,6 +101,10 @@ export default function Home() {
   }, []);
 
   const parseTranscript = async (text) => {
+    // Capture at call time — appendRef could theoretically change before
+    // this async call resolves if the user is fast, and a failure here
+    // needs to know whether to preserve the existing review list.
+    const wasAppend = appendRef.current;
     setVoiceState('parsing');
     try {
       const res = await fetch('/api/voice-parse', {
@@ -110,14 +115,30 @@ export default function Home() {
       const data = await res.json();
       if (res.status === 401) { router.push('/welcome'); return; }
       if (!res.ok) throw new Error(data.error || 'Something went wrong');
+
       if (!data.items?.length) {
+        // Adding more shouldn't nuke what's already confirmed on the review
+        // screen — land back there with a note instead of the full error
+        // screen, which would otherwise discard voiceItems via resetVoice.
+        if (wasAppend) {
+          setVoiceError("Didn't catch anything extra — the rest of your list is unchanged.");
+          setVoiceState('review');
+          return;
+        }
         setVoiceError("Didn't catch any items in that — try naming what you need, like \"add milk and onions\".");
         setVoiceState('error');
         return;
       }
-      setVoiceItems(data.items);
+
+      setVoiceItems((prev) => (wasAppend ? [...prev, ...data.items] : data.items));
+      setVoiceError(null);
       setVoiceState('review');
     } catch (err) {
+      if (wasAppend) {
+        setVoiceError(err.message);
+        setVoiceState('review');
+        return;
+      }
       setVoiceError(err.message);
       setVoiceState('error');
     }
@@ -203,7 +224,10 @@ export default function Home() {
 
   // Sarvam is a batch endpoint (send a clip, get one transcript back) — no
   // live captions here, unlike the SpeechRecognition fallback below.
-  const startRecording = async () => {
+  // `append` carries through any fallback to SpeechRecognition too, since
+  // that's a continuation of the same tap, not a fresh one.
+  const startRecording = async (append = false) => {
+    appendRef.current = append;
     if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) {
       startListening();   // no MediaRecorder support — go straight to the fallback
       return;
@@ -240,7 +264,8 @@ export default function Home() {
     setVoiceState('transcribing');
     try {
       const form = new FormData();
-      form.append('audio', blob, 'voice-order.webm');
+      const ext = blob.type.split(';')[0].split('/')[1] || 'webm';
+      form.append('audio', blob, `voice-order.${ext}`);
       const res = await fetch('/api/voice-transcribe', { method: 'POST', body: form });
       const data = await res.json();
       if (res.status === 401) { router.push('/welcome'); return; }
@@ -257,6 +282,7 @@ export default function Home() {
 
   const resetVoice = () => {
     stoppedByUserRef.current = true;
+    appendRef.current = false;
     recognitionRef.current?.stop();
     mediaRecorderRef.current?.stop();
     mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -480,7 +506,7 @@ export default function Home() {
                   <div style={{ background: T.redSoft, color: T.red, padding: '12px 14px', borderRadius: 10, marginBottom: 16, fontSize: 13, lineHeight: 1.5, textAlign: 'left' }}>
                     {voiceError}
                   </div>
-                  <button onClick={startRecording} style={shell.primaryBtn}>Try again</button>
+                  <button onClick={() => startRecording(false)} style={shell.primaryBtn}>Try again</button>
                   <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
                     Back to scan
                   </button>
@@ -492,6 +518,11 @@ export default function Home() {
                   <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 14px', textAlign: 'center' }}>
                     Here's what I heard
                   </p>
+                  {voiceError && (
+                    <div style={{ background: T.amberSoft, color: T.amber, padding: '10px 14px', borderRadius: 10, marginBottom: 12, fontSize: 12, lineHeight: 1.5 }}>
+                      {voiceError}
+                    </div>
+                  )}
                   {voiceItems.map((item, i) => (
                     <div key={i} style={{
                       display: 'flex', alignItems: 'center', gap: 12,
@@ -510,8 +541,11 @@ export default function Home() {
                   <button onClick={confirmVoiceOrder} style={{ ...shell.successBtn, marginTop: 14 }}>
                     Order {voiceItems.length} {voiceItems.length === 1 ? 'item' : 'items'} on Instamart
                   </button>
-                  <button onClick={startRecording} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
-                    That's not quite right — try again
+                  <button onClick={() => startRecording(true)} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                    🎤 Add more items
+                  </button>
+                  <button onClick={() => startRecording(false)} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                    That's not quite right — start over
                   </button>
                   <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
                     Back to scan
@@ -553,7 +587,7 @@ export default function Home() {
                 <>
                   <div style={{ textAlign: 'center', color: T.muted, fontSize: 12, margin: '16px 0' }}>or</div>
                   <button
-                    onClick={startRecording}
+                    onClick={() => startRecording(false)}
                     style={{
                       width: '100%', background: '#fff', color: T.orange,
                       border: `1.5px solid ${T.orange}`, borderRadius: 10,

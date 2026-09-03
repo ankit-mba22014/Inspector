@@ -21,7 +21,8 @@ Return ONLY a valid JSON object (no markdown, no explanation, no backticks) in t
 
 Rules:
 - Every "name" MUST be a specific, searchable product — something you could type into a grocery search bar and get a real result: "Tomatoes", "Onions", "Milk". NEVER a category or umbrella term: "Vegetables", "Groceries", "Snacks", "Dairy", "Essentials", "Spices".
-- Write every "name" and "quantity" in plain English only, even when the transcript is in Hindi or Hinglish — translate it (e.g. "doodh" → "Milk", "tamatar" → "Tomatoes", "pyaz" → "Onions", "aloo" → "Potatoes").
+- Write every "name" and "quantity" in plain English only, even when the transcript is in Hindi or Hinglish — translate it (e.g. "doodh" → "Milk", "tamatar" → "Tomatoes", "pyaz" → "Onions", "aloo" → "Potatoes", "dahi" → "Curd").
+- Use the term an Indian grocery catalogue actually lists the product under, not just any literal English translation — "dahi" is "Curd", not "Yogurt" (a different, less common catalogue listing there).
 - Only include "quantity" if one was actually mentioned — don't invent one.
 - Do not invent items that weren't actually said. If the transcript doesn't clearly name any real grocery item, return {"items": []}.
 
