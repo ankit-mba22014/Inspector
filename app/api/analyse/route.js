@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/auth';
 import { createAdminSupabase } from '@/lib/supabase/server';
+import { dropGenericItems } from '@/lib/genericItemFilter';
 
 // Two angles is enough to cover a door plus the main compartment; more only
 // adds cost and latency for diminishing returns.
@@ -45,28 +46,6 @@ already have.
 
 Focus on Indian kitchen staples: vegetables, dairy, atta, dal, rice, spices, oils, condiments, beverages.
 Recognise steel dabbas, loose grains, and Indian brands (Amul, Everest, Tata) — but describe everything in English.`;
-
-// Insurance against the model naming a category instead of a product — the
-// prompt asks it not to, but these never match anything on Instamart, so we
-// strip them server-side too.
-const GENERIC_CATEGORY_TERMS = [
-  'fresh vegetables', 'vegetables', 'groceries', 'spices', 'dairy', 'essentials', 'snacks',
-];
-
-function isGenericCategoryName(name) {
-  const n = String(name || '').toLowerCase();
-  return GENERIC_CATEGORY_TERMS.some((term) => n.includes(term));
-}
-
-function dropGenericItems(list, bucket) {
-  return (list || []).filter((item) => {
-    if (isGenericCategoryName(item?.name)) {
-      console.warn(`analyse: dropped generic-category item from ${bucket}: "${item?.name}"`);
-      return false;
-    }
-    return true;
-  });
-}
 
 export async function POST(req) {
   const user = await currentUser();

@@ -72,6 +72,111 @@ export default function Home() {
     setIsMobile(/android|iphone|ipad|ipod/i.test(navigator.userAgent));
   }, []);
 
+  // ---- Speak to order ----
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const [voiceState, setVoiceState] = useState('idle');   // idle | listening | parsing | review | error
+  const [transcript, setTranscript] = useState('');
+  const [voiceItems, setVoiceItems] = useState([]);
+  const [voiceError, setVoiceError] = useState(null);
+  const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    setVoiceSupported(!!(window.SpeechRecognition || window.webkitSpeechRecognition));
+    return () => recognitionRef.current?.stop();
+  }, []);
+
+  const parseTranscript = async (text) => {
+    setVoiceState('parsing');
+    try {
+      const res = await fetch('/api/voice-parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: text }),
+      });
+      const data = await res.json();
+      if (res.status === 401) { router.push('/welcome'); return; }
+      if (!res.ok) throw new Error(data.error || 'Something went wrong');
+      if (!data.items?.length) {
+        setVoiceError("Didn't catch any items in that — try naming what you need, like \"add milk and onions\".");
+        setVoiceState('error');
+        return;
+      }
+      setVoiceItems(data.items);
+      setVoiceState('review');
+    } catch (err) {
+      setVoiceError(err.message);
+      setVoiceState('error');
+    }
+  };
+
+  const startListening = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+
+    const recognition = new SR();
+    recognition.lang = 'en-IN';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    let finalTranscript = '';
+    let errored = false;
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const chunk = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalTranscript += chunk + ' ';
+        else interim += chunk;
+      }
+      setTranscript((finalTranscript + interim).trim());
+    };
+
+    // Speech recognition errors ('not-allowed', 'no-speech', etc.) fire
+    // onerror and are usually followed by onend — the flag stops onend from
+    // also trying to parse whatever partial transcript we had.
+    recognition.onerror = (event) => {
+      errored = true;
+      setVoiceState('error');
+      setVoiceError(
+        event.error === 'not-allowed'
+          ? 'Microphone access was blocked — allow it in your browser settings and try again.'
+          : "Didn't catch that. Try again."
+      );
+    };
+
+    recognition.onend = () => {
+      if (errored) return;
+      const heard = finalTranscript.trim();
+      if (heard) {
+        parseTranscript(heard);
+      } else {
+        setVoiceState('error');
+        setVoiceError("Didn't catch anything. Try again.");
+      }
+    };
+
+    recognitionRef.current = recognition;
+    setTranscript('');
+    setVoiceError(null);
+    setVoiceState('listening');
+    recognition.start();
+  };
+
+  const stopListening = () => recognitionRef.current?.stop();
+
+  const resetVoice = () => {
+    recognitionRef.current?.stop();
+    setVoiceState('idle');
+    setTranscript('');
+    setVoiceItems([]);
+    setVoiceError(null);
+  };
+
+  const confirmVoiceOrder = () => {
+    sessionStorage.setItem('inspector_pending_cart', JSON.stringify({ items: voiceItems, scanId: null }));
+    router.push('/cart');
+  };
+
   useEffect(() => {
     fetch('/api/auth/me')
       .then((r) => r.json())
@@ -207,34 +312,131 @@ export default function Home() {
             </div>
           )}
 
-          {photos.length === 0 ? (
-            <div
-              onClick={openCamera}
-              style={{
-                border: `1.5px dashed ${T.hairline}`, borderRadius: 14,
-                padding: '44px 20px', textAlign: 'center', cursor: 'pointer',
-              }}
-            >
-              <div style={{
-                width: 52, height: 52, borderRadius: '50%', background: T.orangeSoft,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                margin: '0 auto 14px', fontSize: 24,
-              }}>📷</div>
-              <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 4px' }}>
-                Scan your fridge
-              </p>
-              <p style={{ color: T.muted, fontSize: 13, margin: '0 0 18px', lineHeight: 1.5 }}>
-                {isMobile
-                  ? 'Take a photo of your fridge or shelves'
-                  : 'Photograph your fridge, shelves, or storage'}
-              </p>
-              <span style={{
-                display: 'inline-block', background: T.orange, color: '#fff',
-                padding: '11px 26px', borderRadius: 10, fontSize: 14, fontWeight: 700,
-              }}>
-                {isMobile ? 'Take photo' : 'Choose photo'}
-              </span>
+          {voiceState !== 'idle' ? (
+            <div style={{ textAlign: 'center', padding: '4px 0' }}>
+              {voiceState === 'listening' && (
+                <>
+                  <div style={{
+                    width: 54, height: 54, borderRadius: '50%', background: T.orangeSoft,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    margin: '0 auto 16px', fontSize: 24,
+                  }}>
+                    <span style={{ animation: 'insPulse 1.2s ease-in-out infinite' }}>🎤</span>
+                  </div>
+                  <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 4px' }}>
+                    Listening…
+                  </p>
+                  <p style={{
+                    color: transcript ? T.inkSoft : T.muted, fontSize: 14, lineHeight: 1.5,
+                    minHeight: 42, margin: '0 0 20px', padding: '0 8px',
+                  }}>
+                    {transcript || 'Say what you need — "add milk, onions and two kilos of tomatoes"'}
+                  </p>
+                  <style>{`@keyframes insPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }`}</style>
+                  <button onClick={stopListening} style={shell.primaryBtn}>Done</button>
+                  <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                    Cancel
+                  </button>
+                </>
+              )}
+
+              {voiceState === 'parsing' && (
+                <div style={{ padding: '32px 0', color: T.muted, fontSize: 14 }}>
+                  Understanding your list…
+                </div>
+              )}
+
+              {voiceState === 'error' && (
+                <>
+                  <div style={{ background: T.redSoft, color: T.red, padding: '12px 14px', borderRadius: 10, marginBottom: 16, fontSize: 13, lineHeight: 1.5, textAlign: 'left' }}>
+                    {voiceError}
+                  </div>
+                  <button onClick={startListening} style={shell.primaryBtn}>Try again</button>
+                  <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                    Back to scan
+                  </button>
+                </>
+              )}
+
+              {voiceState === 'review' && (
+                <div style={{ textAlign: 'left' }}>
+                  <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 14px', textAlign: 'center' }}>
+                    Here's what I heard
+                  </p>
+                  {voiceItems.map((item, i) => (
+                    <div key={i} style={{
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '12px 14px', marginBottom: 8,
+                      border: `1px solid ${T.hairline}`, borderRadius: 12, background: '#fff',
+                    }}>
+                      <span style={{ fontSize: 22, flexShrink: 0 }}>{item.emoji || '•'}</span>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: T.ink }}>
+                        {item.name}
+                        {item.quantity && (
+                          <span style={{ fontWeight: 400, color: T.muted, fontSize: 12 }}> · {item.quantity}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <button onClick={confirmVoiceOrder} style={{ ...shell.successBtn, marginTop: 14 }}>
+                    Order {voiceItems.length} {voiceItems.length === 1 ? 'item' : 'items'} on Instamart
+                  </button>
+                  <button onClick={startListening} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                    That's not quite right — try again
+                  </button>
+                  <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                    Back to scan
+                  </button>
+                </div>
+              )}
             </div>
+          ) : photos.length === 0 ? (
+            <>
+              <div
+                onClick={openCamera}
+                style={{
+                  border: `1.5px dashed ${T.hairline}`, borderRadius: 14,
+                  padding: '44px 20px', textAlign: 'center', cursor: 'pointer',
+                }}
+              >
+                <div style={{
+                  width: 52, height: 52, borderRadius: '50%', background: T.orangeSoft,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  margin: '0 auto 14px', fontSize: 24,
+                }}>📷</div>
+                <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 4px' }}>
+                  Scan your fridge
+                </p>
+                <p style={{ color: T.muted, fontSize: 13, margin: '0 0 18px', lineHeight: 1.5 }}>
+                  {isMobile
+                    ? 'Take a photo of your fridge or shelves'
+                    : 'Photograph your fridge, shelves, or storage'}
+                </p>
+                <span style={{
+                  display: 'inline-block', background: T.orange, color: '#fff',
+                  padding: '11px 26px', borderRadius: 10, fontSize: 14, fontWeight: 700,
+                }}>
+                  {isMobile ? 'Take photo' : 'Choose photo'}
+                </span>
+              </div>
+
+              {voiceSupported && (
+                <>
+                  <div style={{ textAlign: 'center', color: T.muted, fontSize: 12, margin: '16px 0' }}>or</div>
+                  <button
+                    onClick={startListening}
+                    style={{
+                      width: '100%', background: '#fff', color: T.orange,
+                      border: `1.5px solid ${T.orange}`, borderRadius: 10,
+                      padding: '13px', fontSize: 14, fontWeight: 700,
+                      cursor: 'pointer', fontFamily: 'inherit',
+                    }}
+                  >
+                    🎤 Speak to order
+                  </button>
+                </>
+              )}
+            </>
           ) : (
             <>
               <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
