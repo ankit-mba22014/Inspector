@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/auth';
 import { createAdminSupabase } from '@/lib/supabase/server';
 import { dropGenericItems } from '@/lib/genericItemFilter';
+import { callClaude } from '@/lib/anthropic';
 
 // Two angles is enough to cover a door plus the main compartment; more only
 // adds cost and latency for diminishing returns.
@@ -80,45 +81,31 @@ export async function POST(req) {
 
   let parsed;
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-opus-4-5',
-        max_tokens: 1024,
-        messages: [{
-          role: 'user',
-          content: [
-            // Label each photo so the model can refer to them distinctly
-            ...images.flatMap((img, i) => [
-              ...(images.length > 1
-                ? [{ type: 'text', text: `Photo ${i + 1} of ${images.length}:` }]
-                : []),
-              {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: img.mediaType || 'image/jpeg',
-                  data: img.data,
-                },
+    const data = await callClaude({
+      model: 'claude-opus-4-5',
+      max_tokens: 1024,
+      messages: [{
+        role: 'user',
+        content: [
+          // Label each photo so the model can refer to them distinctly
+          ...images.flatMap((img, i) => [
+            ...(images.length > 1
+              ? [{ type: 'text', text: `Photo ${i + 1} of ${images.length}:` }]
+              : []),
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: img.mediaType || 'image/jpeg',
+                data: img.data,
               },
-            ]),
-            { type: 'text', text: promptFor(images.length) },
-          ],
-        }],
-      }),
+            },
+          ]),
+          { type: 'text', text: promptFor(images.length) },
+        ],
+      }],
     });
 
-    if (!res.ok) {
-      const err = await res.json();
-      return NextResponse.json({ error: err.error?.message || 'Vision API error' }, { status: res.status });
-    }
-
-    const data = await res.json();
     const text = data.content?.[0]?.text || '';
     parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
 
@@ -127,7 +114,12 @@ export async function POST(req) {
     parsed.stocked = dropGenericItems(parsed.stocked, 'stocked');
   } catch (err) {
     console.error('Analyse error:', err);
-    return NextResponse.json({ error: 'Could not analyse that image. Try another photo.' }, { status: 500 });
+    const busy = err.status === 429 || err.status === 529;
+    const status = err.status && err.status >= 400 && err.status < 500 ? err.status : 500;
+    const message = busy
+      ? "Claude's a bit busy right now — try again in a moment."
+      : 'Could not analyse that image. Try another photo.';
+    return NextResponse.json({ error: message }, { status });
   }
 
   const { data: scan, error: dbError } = await supabase

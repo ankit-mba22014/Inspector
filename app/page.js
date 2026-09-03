@@ -79,10 +79,14 @@ export default function Home() {
   const [voiceItems, setVoiceItems] = useState([]);
   const [voiceError, setVoiceError] = useState(null);
   const recognitionRef = useRef(null);
+  const stoppedByUserRef = useRef(false);   // true once the user taps Done/Cancel
 
   useEffect(() => {
     setVoiceSupported(!!(window.SpeechRecognition || window.webkitSpeechRecognition));
-    return () => recognitionRef.current?.stop();
+    return () => {
+      stoppedByUserRef.current = true;
+      recognitionRef.current?.stop();
+    };
   }, []);
 
   const parseTranscript = async (text) => {
@@ -109,6 +113,14 @@ export default function Home() {
     }
   };
 
+  // Mobile Chrome in particular ends a "continuous" session on its own —
+  // after a pause, or a platform timeout — well before the user is actually
+  // done listing items. Only these count as truly fatal; everything else
+  // (no-speech, network blip, aborted) gets a silent restart instead of
+  // ending the whole flow.
+  const FATAL_SPEECH_ERRORS = new Set(['not-allowed', 'service-not-allowed', 'audio-capture']);
+  const MAX_RESTARTS = 6;
+
   const startListening = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
@@ -120,6 +132,8 @@ export default function Home() {
 
     let finalTranscript = '';
     let errored = false;
+    let restarts = 0;
+    stoppedByUserRef.current = false;
 
     recognition.onresult = (event) => {
       let interim = '';
@@ -131,21 +145,30 @@ export default function Home() {
       setTranscript((finalTranscript + interim).trim());
     };
 
-    // Speech recognition errors ('not-allowed', 'no-speech', etc.) fire
-    // onerror and are usually followed by onend — the flag stops onend from
-    // also trying to parse whatever partial transcript we had.
     recognition.onerror = (event) => {
+      if (!FATAL_SPEECH_ERRORS.has(event.error)) return;   // let onend restart it
       errored = true;
       setVoiceState('error');
       setVoiceError(
-        event.error === 'not-allowed'
+        event.error === 'not-allowed' || event.error === 'service-not-allowed'
           ? 'Microphone access was blocked — allow it in your browser settings and try again.'
-          : "Didn't catch that. Try again."
+          : "Couldn't access your microphone. Try again."
       );
     };
 
     recognition.onend = () => {
       if (errored) return;
+
+      if (!stoppedByUserRef.current && restarts < MAX_RESTARTS) {
+        restarts += 1;
+        try {
+          recognition.start();
+          return;
+        } catch {
+          // already stopped for good — fall through and wrap up below
+        }
+      }
+
       const heard = finalTranscript.trim();
       if (heard) {
         parseTranscript(heard);
@@ -162,9 +185,13 @@ export default function Home() {
     recognition.start();
   };
 
-  const stopListening = () => recognitionRef.current?.stop();
+  const stopListening = () => {
+    stoppedByUserRef.current = true;
+    recognitionRef.current?.stop();
+  };
 
   const resetVoice = () => {
+    stoppedByUserRef.current = true;
     recognitionRef.current?.stop();
     setVoiceState('idle');
     setTranscript('');

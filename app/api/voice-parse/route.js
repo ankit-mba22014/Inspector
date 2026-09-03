@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { currentUser } from '@/lib/auth';
 import { dropGenericItems } from '@/lib/genericItemFilter';
+import { callClaude } from '@/lib/anthropic';
 
 const MAX_TRANSCRIPT_LENGTH = 2000;
 
@@ -47,34 +48,24 @@ export async function POST(req) {
 
   let parsed;
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-opus-5',
-        max_tokens: 1024,
-        // Short extraction task on a voice interaction the user is waiting
-        // on live — low effort keeps it snappy without hurting accuracy here.
-        output_config: { effort: 'low' },
-        messages: [{ role: 'user', content: PROMPT(transcript) }],
-      }),
+    const data = await callClaude({
+      model: 'claude-opus-5',
+      max_tokens: 1024,
+      // Short extraction task on a voice interaction the user is waiting
+      // on live — low effort keeps it snappy without hurting accuracy here.
+      output_config: { effort: 'low' },
+      messages: [{ role: 'user', content: PROMPT(transcript) }],
     });
-
-    if (!res.ok) {
-      const err = await res.json();
-      return NextResponse.json({ error: err.error?.message || 'Voice parsing error' }, { status: res.status });
-    }
-
-    const data = await res.json();
     const text = data.content?.[0]?.text || '';
     parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
   } catch (err) {
     console.error('voice-parse error:', err);
-    return NextResponse.json({ error: "Couldn't understand that. Try speaking again." }, { status: 500 });
+    const busy = err.status === 429 || err.status === 529;
+    const status = err.status && err.status >= 400 && err.status < 500 ? err.status : 500;
+    const message = busy
+      ? "Claude's a bit busy right now — try again in a moment."
+      : "Couldn't understand that. Try speaking again.";
+    return NextResponse.json({ error: message }, { status });
   }
 
   const items = dropGenericItems(parsed.items, 'voice-parse');
