@@ -5,8 +5,9 @@ import { useRouter } from 'next/navigation';
 import { T, shell, responsiveCSS } from '../theme';
 import PaymentIcon from '@/components/PaymentIcon';
 
-// Instamart's documented minimum for MCP checkout
+// Instamart's documented range for MCP checkout
 const MIN_ORDER = 99;
+const MAX_ORDER = 1000;
 
 export default function CartPage() {
   const [cart, setCart] = useState(null);
@@ -30,6 +31,7 @@ export default function CartPage() {
 
   // Payment
   const [payment, setPayment] = useState(null);        // options from Swiggy
+  const [paymentError, setPaymentError] = useState(null);   // separate from cart-level `error`
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [placing, setPlacing] = useState(false);
@@ -97,14 +99,17 @@ export default function CartPage() {
         .filter((r) => r.found)
         .map((r) => ({ ...r.product, quantity_count: 1 }));
 
-      const builtCart = await syncCart(found, searchData.address?.id, headers, found);
+      await syncCart(found, searchData.address?.id, headers, found);
 
-      // Fetch payment options as soon as the cart is known, so the picker is
-      // ready the moment the user finishes reviewing — no extra tap to reach
-      // it. Skip it below the order minimum; there's nothing to pay for yet.
-      if ((builtCart?.total ?? 0) >= MIN_ORDER) {
-        loadPaymentOptions();
-      }
+      // Fetch payment options as soon as the cart is known, unconditionally —
+      // the total is live, mutable state (items get added/removed after
+      // load), but the fetch itself doesn't depend on it. Gating this on the
+      // ₹99 minimum meant a cart that started below it never fetched, and
+      // nothing later ever retried, so crossing the threshold by adding
+      // items left the picker with no data to render. The ₹99/₹1000 range
+      // only controls what's DISPLAYED — see the render below — not whether
+      // this runs.
+      loadPaymentOptions();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -212,13 +217,18 @@ export default function CartPage() {
     // against the old address is no longer valid.
     setPayment(null);
     setSelectedPayment(null);
+    setPaymentError(null);
     if (pending) buildCart(pending.items, addr.id);
   };
 
   // ---- Payment ----
+  // Errors here go to paymentError, not the shared cart `error` — a payment
+  // fetch failing must not blank out or override an unrelated cart-load
+  // error (or vice versa). needsSwiggyAuth stays shared: a 401 from either
+  // fetch genuinely means the same Swiggy session is dead either way.
   const loadPaymentOptions = async () => {
     setLoadingPayments(true);
-    setError(null);
+    setPaymentError(null);
     try {
       const res = await fetch('/api/payment-options');
       const data = await res.json();
@@ -228,7 +238,7 @@ export default function CartPage() {
       }
       setPayment(data);
     } catch (err) {
-      setError(err.message);
+      setPaymentError(err.message);
     } finally {
       setLoadingPayments(false);
     }
@@ -799,9 +809,24 @@ export default function CartPage() {
                       Instamart needs a minimum order of ₹{MIN_ORDER}. Add ₹{MIN_ORDER - cart.total} more
                       to place this one.
                     </div>
+                  ) : cart.total > MAX_ORDER ? (
+                    <div style={{
+                      background: T.amberSoft, color: T.amber, padding: '12px 14px',
+                      borderRadius: 10, marginBottom: 16, fontSize: 13, lineHeight: 1.5,
+                    }}>
+                      Instamart caps orders placed here at ₹{MAX_ORDER}. Remove ₹{cart.total - MAX_ORDER} worth
+                      of items to place this one.
+                    </div>
                   ) : !payment ? (
                     <div style={{ textAlign: 'center', padding: '16px 0', color: T.muted, fontSize: 13 }}>
-                      {loadingPayments ? 'Loading payment options…' : null}
+                      {paymentError ? (
+                        <div style={{ background: T.redSoft, color: T.red, padding: '12px 14px', borderRadius: 10, fontSize: 13, lineHeight: 1.5, textAlign: 'left' }}>
+                          {paymentError}
+                          <button onClick={loadPaymentOptions} style={{ ...shell.ghostBtn, width: '100%', marginTop: 10, padding: 10 }}>
+                            Try again
+                          </button>
+                        </div>
+                      ) : loadingPayments ? 'Loading payment options…' : null}
                     </div>
                   ) : (
                     <>
