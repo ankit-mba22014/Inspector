@@ -25,9 +25,48 @@ Return ONLY a valid JSON object (no markdown, no explanation, no backticks) in t
 }
 
 Write every field in plain, clear English only — no Hindi or Hinglish words.
-Use simple, searchable product names (e.g. "Onions", "Curd", "Butter") since these get matched against a grocery catalogue.
+
+Every "name" MUST be a specific, searchable product — something you could type
+into a grocery search bar and get a real result: "Tomatoes", "Onions",
+"Coriander", "Curd", "Butter". NEVER a category or umbrella term: "Fresh
+Vegetables", "Vegetables", "Groceries", "Spices", "Dairy", "Essentials",
+"Snacks" are all forbidden as names, even with a quantity attached. If you can
+see that produce is generally low but cannot identify the specific items, do
+not invent a category item for it — leave it out of all three lists and
+mention it in "summary" instead (e.g. "the vegetable drawer looks low but I
+can't make out what's in it").
+
+Only report an item as missing, empty, or low when you can clearly see the
+space where it would be. If a drawer, container, or compartment is closed,
+opaque, translucent, or only partially in frame, do not guess or infer its
+contents — leave it out entirely rather than reporting it empty. Omitting an
+item is far better than wrongly telling someone to rebuy something they
+already have.
+
 Focus on Indian kitchen staples: vegetables, dairy, atta, dal, rice, spices, oils, condiments, beverages.
 Recognise steel dabbas, loose grains, and Indian brands (Amul, Everest, Tata) — but describe everything in English.`;
+
+// Insurance against the model naming a category instead of a product — the
+// prompt asks it not to, but these never match anything on Instamart, so we
+// strip them server-side too.
+const GENERIC_CATEGORY_TERMS = [
+  'fresh vegetables', 'vegetables', 'groceries', 'spices', 'dairy', 'essentials', 'snacks',
+];
+
+function isGenericCategoryName(name) {
+  const n = String(name || '').toLowerCase();
+  return GENERIC_CATEGORY_TERMS.some((term) => n.includes(term));
+}
+
+function dropGenericItems(list, bucket) {
+  return (list || []).filter((item) => {
+    if (isGenericCategoryName(item?.name)) {
+      console.warn(`analyse: dropped generic-category item from ${bucket}: "${item?.name}"`);
+      return false;
+    }
+    return true;
+  });
+}
 
 export async function POST(req) {
   const user = await currentUser();
@@ -103,6 +142,10 @@ export async function POST(req) {
     const data = await res.json();
     const text = data.content?.[0]?.text || '';
     parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+
+    parsed.order_now = dropGenericItems(parsed.order_now, 'order_now');
+    parsed.running_low = dropGenericItems(parsed.running_low, 'running_low');
+    parsed.stocked = dropGenericItems(parsed.stocked, 'stocked');
   } catch (err) {
     console.error('Analyse error:', err);
     return NextResponse.json({ error: 'Could not analyse that image. Try another photo.' }, { status: 500 });

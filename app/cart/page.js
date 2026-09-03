@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { T, shell, responsiveCSS } from '../theme';
+import PaymentIcon from '@/components/PaymentIcon';
 
 // Instamart's documented minimum for MCP checkout
 const MIN_ORDER = 99;
@@ -35,12 +36,16 @@ export default function CartPage() {
   const [awaiting, setAwaiting] = useState(null);      // { order, qrDataUrl }
   const [paymentStatusMsg, setPaymentStatusMsg] = useState(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [isAndroid, setIsAndroid] = useState(false);
+  const [tappedId, setTappedId] = useState(null);
   const [needsSwiggyAuth, setNeedsSwiggyAuth] = useState(false);
 
   // UPI intent links are app deep links — they only work on a phone.
   // Desktop must use the scan-QR flow instead.
   useEffect(() => {
-    setIsMobile(/android|iphone|ipad|ipod/i.test(navigator.userAgent));
+    const ua = navigator.userAgent;
+    setIsMobile(/android|iphone|ipad|ipod/i.test(ua));
+    setIsAndroid(/android/i.test(ua));
   }, []);
 
   const router = useRouter();
@@ -52,6 +57,16 @@ export default function CartPage() {
     setPending(parsed);
     buildCart(parsed.items, null);
   }, []);
+
+  // Android honours window.location.href to an app scheme even outside a
+  // direct tap, so it can open automatically. iOS blocks that and shows an
+  // ugly error for an unhandled scheme — the tap-to-pay anchor stays the
+  // only path there.
+  useEffect(() => {
+    if (awaiting && isAndroid && awaiting.upiUrl) {
+      window.location.href = awaiting.upiUrl;
+    }
+  }, [awaiting, isAndroid]);
 
   // Cookies are sent automatically, so requests need no auth plumbing.
   const authHeaders = async () => ({ 'Content-Type': 'application/json' });
@@ -82,7 +97,14 @@ export default function CartPage() {
         .filter((r) => r.found)
         .map((r) => ({ ...r.product, quantity_count: 1 }));
 
-      await syncCart(found, searchData.address?.id, headers, found);
+      const builtCart = await syncCart(found, searchData.address?.id, headers, found);
+
+      // Fetch payment options as soon as the cart is known, so the picker is
+      // ready the moment the user finishes reviewing — no extra tap to reach
+      // it. Skip it below the order minimum; there's nothing to pay for yet.
+      if ((builtCart?.total ?? 0) >= MIN_ORDER) {
+        loadPaymentOptions();
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -212,8 +234,13 @@ export default function CartPage() {
     }
   };
 
-  const placeOrder = async () => {
-    if (!selectedPayment) return;
+  // `method` lets a tap-to-pay tile fire checkout with its own option
+  // immediately, without waiting on the selectedPayment state to settle;
+  // the desktop flow still calls this with no argument and falls back to
+  // whatever's selected.
+  const placeOrder = async (method) => {
+    const pay = method || selectedPayment;
+    if (!pay) return;
     setPlacing(true);
     setError(null);
     setPaymentStatusMsg(null);
@@ -227,12 +254,12 @@ export default function CartPage() {
         addressId: selectedAddress?.id,
       };
 
-      if (selectedPayment.kind === 'cash') {
+      if (pay.kind === 'cash') {
         body.paymentMethod = 'Cash';
-      } else if (selectedPayment.kind === 'upi-intent') {
+      } else if (pay.kind === 'upi-intent') {
         body.paymentMethod = 'UPI';
-        body.intentApp = selectedPayment.id;   // echoed byte-for-byte
-      } else if (selectedPayment.kind === 'upi-qr') {
+        body.intentApp = pay.id;   // echoed byte-for-byte
+      } else if (pay.kind === 'upi-qr') {
         body.paymentMethod = 'UPI';
         body.generateUPIQR = true;
       }
@@ -260,6 +287,16 @@ export default function CartPage() {
       setError(err.message);
       setPlacing(false);
     }
+  };
+
+  // Tapping an app tile pays with it immediately — no separate "select then
+  // confirm" step. `placing` already guards against a second tap landing
+  // mid-checkout.
+  const handleTapToPay = (opt) => {
+    if (placing) return;
+    setSelectedPayment(opt);
+    setTappedId(opt.id);
+    placeOrder(opt);
   };
 
   /**
@@ -390,6 +427,11 @@ export default function CartPage() {
                         >
                           Didn't open? Pay on Swiggy's page
                         </a>
+                      )}
+                      {mode === 'live' && (
+                        <p style={{ fontSize: 12, color: T.muted, lineHeight: 1.5, marginBottom: 0 }}>
+                          This places a real order on your Swiggy account.
+                        </p>
                       )}
                     </>
                   );
@@ -749,7 +791,7 @@ export default function CartPage() {
                     <span style={{ fontSize: 18, fontWeight: 700, color: T.orangeDeep }}>₹{cart.total}</span>
                   </div>
 
-                  {cart.total < MIN_ORDER && (
+                  {cart.total < MIN_ORDER ? (
                     <div style={{
                       background: T.amberSoft, color: T.amber, padding: '12px 14px',
                       borderRadius: 10, marginBottom: 16, fontSize: 13, lineHeight: 1.5,
@@ -757,27 +799,10 @@ export default function CartPage() {
                       Instamart needs a minimum order of ₹{MIN_ORDER}. Add ₹{MIN_ORDER - cart.total} more
                       to place this one.
                     </div>
-                  )}
-
-                  {!payment ? (
-                    <>
-                      <button
-                        onClick={loadPaymentOptions}
-                        disabled={loadingPayments || cart.total < MIN_ORDER}
-                        style={{
-                          ...shell.primaryBtn,
-                          opacity: loadingPayments || cart.total < MIN_ORDER ? 0.5 : 1,
-                          cursor: cart.total < MIN_ORDER ? 'not-allowed' : 'pointer',
-                        }}
-                      >
-                        {loadingPayments ? 'Loading payment options…' : 'Choose how to pay'}
-                      </button>
-                      {mode === 'live' && (
-                        <p style={{ fontSize: 12, color: T.muted, textAlign: 'center', marginTop: 10 }}>
-                          Nothing is charged until you confirm.
-                        </p>
-                      )}
-                    </>
+                  ) : !payment ? (
+                    <div style={{ textAlign: 'center', padding: '16px 0', color: T.muted, fontSize: 13 }}>
+                      {loadingPayments ? 'Loading payment options…' : null}
+                    </div>
                   ) : (
                     <>
                       {(() => {
@@ -803,6 +828,90 @@ export default function CartPage() {
                           );
                         }
 
+                        // ---- Mobile: horizontal tap-to-pay row + cash below ----
+                        if (isMobile) {
+                          const upiMethods = payment.mobile || [];
+                          const cashMethods = payment.cash || [];
+
+                          return (
+                            <>
+                              {upiMethods.length > 0 && (
+                                <>
+                                  <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: T.muted, marginBottom: 10 }}>
+                                    Pay ₹{cart.total} with
+                                  </p>
+                                  <div style={{
+                                    display: 'flex', gap: 14, overflowX: 'auto',
+                                    paddingBottom: 6, marginBottom: 16, WebkitOverflowScrolling: 'touch',
+                                  }}>
+                                    {upiMethods.map((opt) => {
+                                      const isTapped = placing && tappedId === opt.id;
+                                      return (
+                                        <button
+                                          key={opt.id}
+                                          onClick={() => handleTapToPay(opt)}
+                                          disabled={placing}
+                                          style={{
+                                            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+                                            flexShrink: 0, width: 72, border: 'none', background: 'none',
+                                            fontFamily: 'inherit', padding: 0,
+                                            cursor: placing ? 'not-allowed' : 'pointer',
+                                            opacity: placing && !isTapped ? 0.4 : 1,
+                                          }}
+                                        >
+                                          {isTapped ? (
+                                            <span style={{
+                                              width: 40, height: 40, display: 'flex',
+                                              alignItems: 'center', justifyContent: 'center',
+                                            }}>
+                                              <span style={{
+                                                width: 18, height: 18, borderRadius: '50%',
+                                                border: `2px solid ${T.orange}`, borderTopColor: 'transparent',
+                                                display: 'inline-block', animation: 'insSpin 0.7s linear infinite',
+                                              }} />
+                                            </span>
+                                          ) : (
+                                            <PaymentIcon id={opt.id} label={opt.label} size={40} />
+                                          )}
+                                          <span style={{ fontSize: 11, fontWeight: 600, color: T.ink, textAlign: 'center', lineHeight: 1.25 }}>
+                                            {opt.label}
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <style>{`@keyframes insSpin { to { transform: rotate(360deg) } }`}</style>
+                                </>
+                              )}
+
+                              {cashMethods.map((opt) => {
+                                const isTapped = placing && tappedId === opt.id;
+                                return (
+                                  <button
+                                    key={opt.id}
+                                    onClick={() => handleTapToPay(opt)}
+                                    disabled={placing}
+                                    style={{
+                                      ...shell.successBtn, width: '100%', marginBottom: 6,
+                                      opacity: placing && !isTapped ? 0.5 : 1,
+                                      cursor: placing ? 'not-allowed' : 'pointer',
+                                    }}
+                                  >
+                                    {isTapped ? 'Placing order…' : `Place order · ₹${cart.total} on delivery`}
+                                  </button>
+                                );
+                              })}
+
+                              {mode === 'live' && (
+                                <p style={{ fontSize: 12, color: T.muted, textAlign: 'center', marginTop: 10, lineHeight: 1.5 }}>
+                                  Delivering to {selectedAddress?.label}. This places a real order on your Swiggy account.
+                                </p>
+                              )}
+                            </>
+                          );
+                        }
+
+                        // ---- Desktop: scan-QR path, unchanged ----
                         return (
                           <>
                             <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: T.muted, marginBottom: 8 }}>
@@ -847,7 +956,7 @@ export default function CartPage() {
                             })}
 
                             <button
-                              onClick={placeOrder}
+                              onClick={() => placeOrder()}
                               disabled={placing || !selectedPayment}
                               style={{
                                 ...shell.successBtn,
