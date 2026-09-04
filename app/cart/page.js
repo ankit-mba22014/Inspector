@@ -272,6 +272,8 @@ export default function CartPage() {
       } else if (pay.kind === 'upi-qr') {
         body.paymentMethod = 'UPI';
         body.generateUPIQR = true;
+      } else if (pay.kind === 'wallet') {
+        body.paymentMethod = pay.id;   // 'SwiggyPay'
       }
 
       const res = await fetch('/api/checkout', {
@@ -284,6 +286,14 @@ export default function CartPage() {
       if (!data.order.pendingPayment) {
         sessionStorage.removeItem('inspector_pending_cart');
         router.push(`/order/${data.order.orderId}`);
+        return;
+      }
+
+      // Wallet settles server-side — there's no app to hand off to, so it
+      // never gets the awaiting-payment screen. Resolve quietly in the
+      // background instead of the UPI long-poll flow.
+      if (pay.kind === 'wallet') {
+        pollWalletPayment(data.order);
         return;
       }
 
@@ -362,6 +372,71 @@ export default function CartPage() {
         // transient — retry on the next tick
       }
 
+      setTimeout(tick, interval);
+    };
+
+    setTimeout(tick, interval);
+  };
+
+  /**
+   * Wallet settlement is server-side, so a terminal result normally lands
+   * on the very first check — check once immediately, and only fall into a
+   * short poll if that first read is still non-terminal. This deliberately
+   * does not touch `awaiting`: the user should never see "Waiting for
+   * payment" for a method with no device to hand off to.
+   */
+  const pollWalletPayment = async (order) => {
+    const interval = 2000;
+    const cap = 20000;   // short — nowhere near the UPI 5-minute window
+    const startedAt = Date.now();
+
+    const finish = (msg) => {
+      setPaymentStatusMsg(msg);
+      setPlacing(false);
+    };
+
+    const check = async () => {
+      const headers = await authHeaders();
+      try {
+        const res = await fetch('/api/payment-status', {
+          method: 'POST', headers,
+          body: JSON.stringify({ paasId: order.paasId, orderId: order.orderId }),
+        });
+        const data = await res.json();
+
+        if (data.terminal && data.success) {
+          sessionStorage.removeItem('inspector_pending_cart');
+          router.push(`/order/${order.orderId}`);
+          return true;
+        }
+        if (data.terminal) {
+          finish(data.humanMessage || 'The payment did not complete.');
+          return true;
+        }
+      } catch {
+        // transient — worth another attempt if there's still budget
+      }
+      return false;
+    };
+
+    if (await check()) return;
+
+    const tick = async () => {
+      if (Date.now() - startedAt > cap) {
+        const headers = await authHeaders();
+        try {
+          const res = await fetch('/api/payment-status', {
+            method: 'POST', headers,
+            body: JSON.stringify({ paasId: order.paasId, orderId: order.orderId, finalize: true }),
+          });
+          const data = await res.json();
+          finish(data.humanMessage || "Couldn't confirm the payment — check your orders in a moment.");
+        } catch {
+          finish("Couldn't confirm the payment — check your orders in a moment.");
+        }
+        return;
+      }
+      if (await check()) return;
       setTimeout(tick, interval);
     };
 
@@ -834,7 +909,7 @@ export default function CartPage() {
                         // Phones get UPI app intents; desktop gets scan-QR.
                         // Cash shows on both when Swiggy offers it.
                         const upi = isMobile ? payment.mobile : payment.desktop;
-                        const methods = [...(upi || []), ...(payment.cash || [])];
+                        const methods = [...(upi || []), ...(payment.cash || []), ...(payment.wallet || [])];
 
                         if (methods.length === 0) {
                           return (
@@ -857,6 +932,45 @@ export default function CartPage() {
                         if (isMobile) {
                           const upiMethods = payment.mobile || [];
                           const cashMethods = payment.cash || [];
+                          const walletMethods = payment.wallet || [];
+
+                          // Icon-above-label tile shared by the COD/Swiggy Money
+                          // row — same tap-to-pay-immediately pattern as the UPI
+                          // tiles above, just sized for one or two per row rather
+                          // than a scrolling strip.
+                          const renderMethodTile = (opt, emoji, half) => {
+                            const isTapped = placing && tappedId === opt.id;
+                            return (
+                              <button
+                                key={opt.id}
+                                onClick={() => handleTapToPay(opt)}
+                                disabled={placing}
+                                style={{
+                                  flex: half ? 1 : undefined,
+                                  width: half ? undefined : '100%',
+                                  display: 'flex', flexDirection: 'column', alignItems: 'center',
+                                  justifyContent: 'center', gap: 6,
+                                  border: `1.5px solid ${T.hairline}`, borderRadius: 12,
+                                  padding: '14px 10px', background: '#fff',
+                                  fontFamily: 'inherit', cursor: placing ? 'not-allowed' : 'pointer',
+                                  opacity: placing && !isTapped ? 0.5 : 1,
+                                }}
+                              >
+                                {isTapped ? (
+                                  <span style={{
+                                    width: 20, height: 20, borderRadius: '50%',
+                                    border: `2px solid ${T.orange}`, borderTopColor: 'transparent',
+                                    display: 'inline-block', animation: 'insSpin 0.7s linear infinite',
+                                  }} />
+                                ) : (
+                                  <span style={{ fontSize: 22 }}>{emoji}</span>
+                                )}
+                                <span style={{ fontSize: 13, fontWeight: 700, color: T.ink, textAlign: 'center', lineHeight: 1.3 }}>
+                                  {isTapped ? 'Placing…' : opt.label}
+                                </span>
+                              </button>
+                            );
+                          };
 
                           return (
                             <>
@@ -909,23 +1023,57 @@ export default function CartPage() {
                                 </>
                               )}
 
-                              {cashMethods.map((opt) => {
-                                const isTapped = placing && tappedId === opt.id;
-                                return (
-                                  <button
-                                    key={opt.id}
-                                    onClick={() => handleTapToPay(opt)}
-                                    disabled={placing}
-                                    style={{
-                                      ...shell.successBtn, width: '100%', marginBottom: 6,
-                                      opacity: placing && !isTapped ? 0.5 : 1,
-                                      cursor: placing ? 'not-allowed' : 'pointer',
-                                    }}
-                                  >
-                                    {isTapped ? 'Placing order…' : `Place order · ₹${cart.total} on delivery`}
-                                  </button>
-                                );
-                              })}
+                              {cashMethods.length > 0 && walletMethods.length > 0 ? (
+                                // Split bar: COD and Swiggy Money as equal-weight
+                                // peers — both settle without a device handoff,
+                                // unlike the UPI apps above, so they're grouped
+                                // together rather than one dominating the other.
+                                <div style={{ display: 'flex', gap: 10, marginBottom: 6 }}>
+                                  {cashMethods.map((opt) => renderMethodTile(opt, '💵', true))}
+                                  {walletMethods.map((opt) => renderMethodTile(opt, '👛', true))}
+                                </div>
+                              ) : (
+                                <>
+                                  {/* Wallet absent (or cash absent) — same full-width
+                                      treatment either has always had, unchanged. */}
+                                  {cashMethods.map((opt) => {
+                                    const isTapped = placing && tappedId === opt.id;
+                                    return (
+                                      <button
+                                        key={opt.id}
+                                        onClick={() => handleTapToPay(opt)}
+                                        disabled={placing}
+                                        style={{
+                                          ...shell.successBtn, width: '100%', marginBottom: 6,
+                                          opacity: placing && !isTapped ? 0.5 : 1,
+                                          cursor: placing ? 'not-allowed' : 'pointer',
+                                        }}
+                                      >
+                                        {isTapped ? 'Placing order…' : `Place order · ₹${cart.total} on delivery`}
+                                      </button>
+                                    );
+                                  })}
+                                  {walletMethods.map((opt) => {
+                                    const isTapped = placing && tappedId === opt.id;
+                                    return (
+                                      <button
+                                        key={opt.id}
+                                        onClick={() => handleTapToPay(opt)}
+                                        disabled={placing}
+                                        style={{
+                                          width: '100%', marginBottom: 6, background: T.orange, color: '#fff',
+                                          border: 'none', borderRadius: 10, padding: '15px',
+                                          fontSize: 15, fontWeight: 700, fontFamily: 'inherit',
+                                          opacity: placing && !isTapped ? 0.5 : 1,
+                                          cursor: placing ? 'not-allowed' : 'pointer',
+                                        }}
+                                      >
+                                        {isTapped ? 'Placing order…' : `Pay ₹${cart.total} with ${opt.label}`}
+                                      </button>
+                                    );
+                                  })}
+                                </>
+                              )}
 
                               {mode === 'live' && (
                                 <p style={{ fontSize: 12, color: T.muted, textAlign: 'center', marginTop: 10, lineHeight: 1.5 }}>
@@ -959,7 +1107,7 @@ export default function CartPage() {
                                   }}
                                 >
                                   <span style={{ fontSize: 18, flexShrink: 0 }}>
-                                    {opt.kind === 'cash' ? '💵' : opt.kind === 'upi-qr' ? '📷' : '📱'}
+                                    {opt.kind === 'cash' ? '💵' : opt.kind === 'upi-qr' ? '📷' : opt.kind === 'wallet' ? '👛' : '📱'}
                                   </span>
                                   <span style={{ flex: 1 }}>
                                     <span style={{ display: 'block', fontSize: 14, fontWeight: 600, color: T.ink }}>
@@ -973,6 +1121,11 @@ export default function CartPage() {
                                     {opt.kind === 'cash' && (
                                       <span style={{ display: 'block', fontSize: 12, color: T.muted, marginTop: 2 }}>
                                         Pay the delivery partner
+                                      </span>
+                                    )}
+                                    {opt.kind === 'wallet' && (
+                                      <span style={{ display: 'block', fontSize: 12, color: T.muted, marginTop: 2 }}>
+                                        Pay from your Swiggy Money balance
                                       </span>
                                     )}
                                   </span>
