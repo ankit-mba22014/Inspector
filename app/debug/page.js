@@ -1,9 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { notFound } from 'next/navigation';
 import { T, shell, responsiveCSS } from '../theme';
 
 export default function DebugPage() {
+  // NODE_ENV is inlined at build time, so this branch is fixed per
+  // deployment — same as the backing /api/swiggy/debug route's own gate.
+  if (process.env.NODE_ENV !== 'development') notFound();
+
   const [output, setOutput] = useState(null);
   const [loading, setLoading] = useState(false);
   const [addressId, setAddressId] = useState('');

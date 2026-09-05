@@ -3,65 +3,16 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { T, shell, responsiveCSS } from './theme';
+import { useVoiceCapture } from '@/lib/useVoiceCapture';
 
 // A door shot plus the main compartment covers most kitchens; beyond that the
 // extra cost and wait don't buy much accuracy.
 const MAX_PHOTOS = 2;
 
-const SECTIONS = {
-  order_now: { label: 'Order now', bg: T.redSoft, color: T.red, badge: 'Empty' },
-  running_low: { label: 'Running low', bg: T.amberSoft, color: T.amber, badge: 'Low' },
-  stocked: { label: 'Well stocked', bg: T.greenSoft, color: T.green, badge: 'Good' },
-};
-
-function Section({ items, configKey }) {
-  if (!items?.length) return null;
-  const c = SECTIONS[configKey];
-  return (
-    <div style={{ marginBottom: 22 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: c.color }}>
-          {c.label}
-        </span>
-        <span style={{ fontSize: 11, fontWeight: 600, color: c.color, background: c.bg, padding: '2px 8px', borderRadius: 999 }}>
-          {items.length}
-        </span>
-      </div>
-      {items.map((item, i) => (
-        <div key={i} style={{
-          display: 'flex', alignItems: 'center', gap: 12,
-          padding: '12px 14px', marginBottom: 8,
-          border: `1px solid ${T.hairline}`, borderRadius: 12, background: '#fff',
-        }}>
-          <span style={{ fontSize: 22, flexShrink: 0 }}>{item.emoji || '•'}</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: T.ink }}>
-              {item.name}
-              {item.quantity && (
-                <span style={{ fontWeight: 400, color: T.muted, fontSize: 12 }}> · {item.quantity}</span>
-              )}
-            </div>
-            {item.reason && (
-              <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>{item.reason}</div>
-            )}
-          </div>
-          <span style={{
-            fontSize: 10, fontWeight: 700, color: c.color, background: c.bg,
-            padding: '4px 9px', borderRadius: 999, flexShrink: 0,
-          }}>
-            {c.badge}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function Home() {
   const [me, setMe] = useState(null);
   const [photos, setPhotos] = useState([]);      // { dataUrl, base64 }
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [isMobile, setIsMobile] = useState(false);
   const fileRef = useRef();
@@ -72,231 +23,72 @@ export default function Home() {
     setIsMobile(/android|iphone|ipad|ipod/i.test(navigator.userAgent));
   }, []);
 
+  const goToCart = (items, scanId, sourceTranscript) => {
+    sessionStorage.setItem('inspector_pending_cart', JSON.stringify({
+      items, scanId: scanId ?? null, transcript: sourceTranscript ?? null,
+    }));
+    router.push('/cart');
+  };
+
   // ---- Speak to order ----
-  // Primary: record with MediaRecorder, transcribe via Sarvam (server-side).
-  // Fallback: the browser's own SpeechRecognition, used whenever Sarvam is
-  // unsupported, unavailable, out of credits, or otherwise fails.
-  const [voiceSupported, setVoiceSupported] = useState(false);
-  const [voiceState, setVoiceState] = useState('idle');   // idle | recording | transcribing | listening | parsing | review | error
-  const [transcript, setTranscript] = useState('');
-  const [listeningNotice, setListeningNotice] = useState(null);
-  const [voiceItems, setVoiceItems] = useState([]);
-  const [voiceError, setVoiceError] = useState(null);
-  const recognitionRef = useRef(null);
-  const stoppedByUserRef = useRef(false);   // true once the user taps Done/Cancel
-  const mediaRecorderRef = useRef(null);
-  const mediaStreamRef = useRef(null);
-  const appendRef = useRef(false);   // true when "add more" was tapped from the review screen
+  // Capture -> cart -> confirmation is the whole flow. Every stage in
+  // between (recording, transcribing, matching) is machine state, not a
+  // decision — there's no review screen here. Once we have a parsed item
+  // list, we hand off to the cart page immediately and it does the rest.
+  const [parsing, setParsing] = useState(false);
 
-  useEffect(() => {
-    const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-    const hasMediaRecorder = !!(window.MediaRecorder && navigator.mediaDevices?.getUserMedia);
-    setVoiceSupported(hasSpeechRecognition || hasMediaRecorder);
-    return () => {
-      stoppedByUserRef.current = true;
-      recognitionRef.current?.stop();
-      mediaRecorderRef.current?.stop();
-      mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
-
-  const parseTranscript = async (text) => {
-    // Capture at call time — appendRef could theoretically change before
-    // this async call resolves if the user is fast, and a failure here
-    // needs to know whether to preserve the existing review list.
-    const wasAppend = appendRef.current;
-    setVoiceState('parsing');
+  const parseTranscript = async (text, translatedText) => {
+    setParsing(true);
     try {
       const res = await fetch('/api/voice-parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript: text }),
+        body: JSON.stringify({ transcript: text, translatedTranscript: translatedText || undefined }),
       });
       const data = await res.json();
       if (res.status === 401) { router.push('/welcome'); return; }
       if (!res.ok) throw new Error(data.error || 'Something went wrong');
 
       if (!data.items?.length) {
-        // Adding more shouldn't nuke what's already confirmed on the review
-        // screen — land back there with a note instead of the full error
-        // screen, which would otherwise discard voiceItems via resetVoice.
-        if (wasAppend) {
-          setVoiceError("Didn't catch anything extra — the rest of your list is unchanged.");
-          setVoiceState('review');
-          return;
-        }
-        setVoiceError("Didn't catch any items in that — try naming what you need, like \"add milk and onions\".");
-        setVoiceState('error');
+        voice.reportError("Didn't catch that — say it again?");
+        setParsing(false);
         return;
       }
 
-      setVoiceItems((prev) => (wasAppend ? [...prev, ...data.items] : data.items));
-      setVoiceError(null);
-      setVoiceState('review');
-    } catch (err) {
-      if (wasAppend) {
-        setVoiceError(err.message);
-        setVoiceState('review');
-        return;
-      }
-      setVoiceError(err.message);
-      setVoiceState('error');
-    }
-  };
-
-  // Mobile Chrome in particular ends a "continuous" session on its own —
-  // after a pause, or a platform timeout — well before the user is actually
-  // done listing items. Only these count as truly fatal; everything else
-  // (no-speech, network blip, aborted) gets a silent restart instead of
-  // ending the whole flow.
-  const FATAL_SPEECH_ERRORS = new Set(['not-allowed', 'service-not-allowed', 'audio-capture']);
-  const MAX_RESTARTS = 6;
-
-  const startListening = (notice = null) => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
-
-    const recognition = new SR();
-    recognition.lang = 'en-IN';
-    recognition.continuous = true;
-    recognition.interimResults = true;
-
-    let finalTranscript = '';
-    let errored = false;
-    let restarts = 0;
-    stoppedByUserRef.current = false;
-
-    recognition.onresult = (event) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const chunk = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalTranscript += chunk + ' ';
-        else interim += chunk;
-      }
-      setTranscript((finalTranscript + interim).trim());
-    };
-
-    recognition.onerror = (event) => {
-      if (!FATAL_SPEECH_ERRORS.has(event.error)) return;   // let onend restart it
-      errored = true;
-      setVoiceState('error');
-      setVoiceError(
-        event.error === 'not-allowed' || event.error === 'service-not-allowed'
-          ? 'Microphone access was blocked — allow it in your browser settings and try again.'
-          : "Couldn't access your microphone. Try again."
+      goToCart(
+        data.items.map((i) => ({ ...i, inferred: false })),
+        null,
+        text
       );
-    };
-
-    recognition.onend = () => {
-      if (errored) return;
-
-      if (!stoppedByUserRef.current && restarts < MAX_RESTARTS) {
-        restarts += 1;
-        try {
-          recognition.start();
-          return;
-        } catch {
-          // already stopped for good — fall through and wrap up below
-        }
-      }
-
-      const heard = finalTranscript.trim();
-      if (heard) {
-        parseTranscript(heard);
-      } else {
-        setVoiceState('error');
-        setVoiceError("Didn't catch anything. Try again.");
-      }
-    };
-
-    recognitionRef.current = recognition;
-    setTranscript('');
-    setVoiceError(null);
-    setListeningNotice(notice);
-    setVoiceState('listening');
-    recognition.start();
-  };
-
-  const stopListening = () => {
-    stoppedByUserRef.current = true;
-    recognitionRef.current?.stop();
-  };
-
-  // Sarvam is a batch endpoint (send a clip, get one transcript back) — no
-  // live captions here, unlike the SpeechRecognition fallback below.
-  // `append` carries through any fallback to SpeechRecognition too, since
-  // that's a continuation of the same tap, not a fresh one.
-  const startRecording = async (append = false) => {
-    appendRef.current = append;
-    if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) {
-      startListening();   // no MediaRecorder support — go straight to the fallback
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
-      const chunks = [];
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-      recorder.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        mediaStreamRef.current = null;
-        transcribeWithSarvam(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
-      };
-
-      mediaRecorderRef.current = recorder;
-      setVoiceError(null);
-      setVoiceState('recording');
-      recorder.start();
-    } catch {
-      // Mic permission denied or unavailable — try the fallback, which will
-      // surface its own permission error if that's blocked too.
-      startListening();
+    } catch (err) {
+      voice.reportError(err.message);
+      setParsing(false);
     }
   };
 
-  const stopRecording = () => mediaRecorderRef.current?.stop();
+  const voice = useVoiceCapture({ router, onTranscript: parseTranscript });
+  const {
+    voiceSupported, voiceState, transcript, listeningNotice, voiceError,
+    startRecording, stopRecording, stopListening, resetVoice,
+  } = voice;
 
-  const transcribeWithSarvam = async (blob) => {
-    setVoiceState('transcribing');
-    try {
-      const form = new FormData();
-      const ext = blob.type.split(';')[0].split('/')[1] || 'webm';
-      form.append('audio', blob, `voice-order.${ext}`);
-      const res = await fetch('/api/voice-transcribe', { method: 'POST', body: form });
-      const data = await res.json();
-      if (res.status === 401) { router.push('/welcome'); return; }
+  const handleReset = () => {
+    resetVoice();
+    setParsing(false);
+  };
 
-      if (!res.ok || data.fallback || !data.transcript) {
-        startListening("Switched to your device's voice recognition — say that again.");
-        return;
-      }
-      parseTranscript(data.transcript);
-    } catch {
-      startListening("Switched to your device's voice recognition — say that again.");
+  // The cart's transcript line links back here to auto-start a re-record.
+  // A sessionStorage flag, not a ?rerecord=1 URL param — the URL+
+  // history.replaceState version left a stale history entry that the
+  // browser's own back button could restore, re-triggering recording
+  // instead of just leaving the page. Removing the flag the instant it's
+  // read means no navigation can ever replay it.
+  useEffect(() => {
+    if (sessionStorage.getItem('inspector_auto_rerecord') === '1') {
+      sessionStorage.removeItem('inspector_auto_rerecord');
+      startRecording();
     }
-  };
-
-  const resetVoice = () => {
-    stoppedByUserRef.current = true;
-    appendRef.current = false;
-    recognitionRef.current?.stop();
-    mediaRecorderRef.current?.stop();
-    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-    setVoiceState('idle');
-    setTranscript('');
-    setListeningNotice(null);
-    setVoiceItems([]);
-    setVoiceError(null);
-  };
-
-  const confirmVoiceOrder = () => {
-    sessionStorage.setItem('inspector_pending_cart', JSON.stringify({ items: voiceItems, scanId: null }));
-    router.push('/cart');
-  };
+  }, []);
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -336,7 +128,6 @@ export default function Home() {
             ? prev
             : [...prev, { dataUrl: jpeg, base64: jpeg.split(',')[1] }]
         );
-        setResult(null);
         setError(null);
       };
       img.onerror = () => setError("That image couldn't be read. Try another photo.");
@@ -353,7 +144,6 @@ export default function Home() {
 
   const removePhoto = (i) => {
     setPhotos((prev) => prev.filter((_, idx) => idx !== i));
-    setResult(null);
   };
 
   const analyse = async () => {
@@ -371,10 +161,19 @@ export default function Home() {
       const data = await res.json();
       if (res.status === 401) { router.push('/welcome'); return; }
       if (!res.ok) throw new Error(data.error || 'Something went wrong');
-      setResult(data);
+
+      const items = [...(data.order_now || []), ...(data.running_low || [])]
+        .map((i) => ({ ...i, inferred: true }));
+
+      if (items.length === 0) {
+        setError("Didn't spot anything that needs restocking in that photo.");
+        setLoading(false);
+        return;
+      }
+
+      goToCart(items, data.scan_id, null);
     } catch (err) {
       setError(err.message);
-    } finally {
       setLoading(false);
     }
   };
@@ -383,10 +182,6 @@ export default function Home() {
     await fetch('/api/auth/logout', { method: 'POST' });
     router.push('/welcome');
   };
-
-  const orderCount = result
-    ? (result.order_now?.length || 0) + (result.running_low?.length || 0)
-    : 0;
 
   if (!me) {
     return (
@@ -433,7 +228,7 @@ export default function Home() {
             </div>
           )}
 
-          {voiceState !== 'idle' ? (
+          {(voiceState !== 'idle' || parsing) ? (
             <div style={{ textAlign: 'center', padding: '4px 0' }}>
               {voiceState === 'recording' && (
                 <>
@@ -452,15 +247,18 @@ export default function Home() {
                   </p>
                   <style>{`@keyframes insPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }`}</style>
                   <button onClick={stopRecording} style={shell.primaryBtn}>Done</button>
-                  <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                  <button onClick={handleReset} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
                     Cancel
                   </button>
                 </>
               )}
 
               {voiceState === 'transcribing' && (
-                <div style={{ padding: '32px 0', color: T.muted, fontSize: 14 }}>
-                  Transcribing…
+                <div style={{ padding: '48px 0' }}>
+                  <span style={{
+                    width: 10, height: 10, borderRadius: '50%', background: T.orange,
+                    display: 'inline-block', animation: 'insPulse 1.2s ease-in-out infinite',
+                  }} />
                 </div>
               )}
 
@@ -489,15 +287,17 @@ export default function Home() {
                   </p>
                   <style>{`@keyframes insPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }`}</style>
                   <button onClick={stopListening} style={shell.primaryBtn}>Done</button>
-                  <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                  <button onClick={handleReset} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
                     Cancel
                   </button>
                 </>
               )}
 
-              {voiceState === 'parsing' && (
-                <div style={{ padding: '32px 0', color: T.muted, fontSize: 14 }}>
-                  Understanding your list…
+              {parsing && (
+                <div style={{ padding: '20px 8px' }}>
+                  <p style={{ color: T.inkSoft, fontSize: 15, lineHeight: 1.6, fontStyle: 'italic' }}>
+                    "{transcript}"
+                  </p>
                 </div>
               )}
 
@@ -506,51 +306,11 @@ export default function Home() {
                   <div style={{ background: T.redSoft, color: T.red, padding: '12px 14px', borderRadius: 10, marginBottom: 16, fontSize: 13, lineHeight: 1.5, textAlign: 'left' }}>
                     {voiceError}
                   </div>
-                  <button onClick={() => startRecording(false)} style={shell.primaryBtn}>Try again</button>
-                  <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                  <button onClick={startRecording} style={shell.primaryBtn}>Try again</button>
+                  <button onClick={handleReset} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
                     Back to scan
                   </button>
                 </>
-              )}
-
-              {voiceState === 'review' && (
-                <div style={{ textAlign: 'left' }}>
-                  <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 14px', textAlign: 'center' }}>
-                    Here's what I heard
-                  </p>
-                  {voiceError && (
-                    <div style={{ background: T.amberSoft, color: T.amber, padding: '10px 14px', borderRadius: 10, marginBottom: 12, fontSize: 12, lineHeight: 1.5 }}>
-                      {voiceError}
-                    </div>
-                  )}
-                  {voiceItems.map((item, i) => (
-                    <div key={i} style={{
-                      display: 'flex', alignItems: 'center', gap: 12,
-                      padding: '12px 14px', marginBottom: 8,
-                      border: `1px solid ${T.hairline}`, borderRadius: 12, background: '#fff',
-                    }}>
-                      <span style={{ fontSize: 22, flexShrink: 0 }}>{item.emoji || '•'}</span>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: T.ink }}>
-                        {item.name}
-                        {item.quantity && (
-                          <span style={{ fontWeight: 400, color: T.muted, fontSize: 12 }}> · {item.quantity}</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  <button onClick={confirmVoiceOrder} style={{ ...shell.successBtn, marginTop: 14 }}>
-                    Order {voiceItems.length} {voiceItems.length === 1 ? 'item' : 'items'} on Instamart
-                  </button>
-                  <button onClick={() => startRecording(true)} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
-                    🎤 Add more items
-                  </button>
-                  <button onClick={() => startRecording(false)} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
-                    That's not quite right — start over
-                  </button>
-                  <button onClick={resetVoice} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
-                    Back to scan
-                  </button>
-                </div>
               )}
             </div>
           ) : photos.length === 0 ? (
@@ -587,7 +347,7 @@ export default function Home() {
                 <>
                   <div style={{ textAlign: 'center', color: T.muted, fontSize: 12, margin: '16px 0' }}>or</div>
                   <button
-                    onClick={() => startRecording(false)}
+                    onClick={startRecording}
                     style={{
                       width: '100%', background: '#fff', color: T.orange,
                       border: `1.5px solid ${T.orange}`, borderRadius: 10,
@@ -663,14 +423,14 @@ export default function Home() {
                   : `Both photos will be read together (${MAX_PHOTOS} of ${MAX_PHOTOS}).`}
               </p>
 
-              {!result && !loading && (
+              {!loading && (
                 <button onClick={analyse} style={shell.primaryBtn}>
                   {photos.length > 1 ? 'Analyse both photos' : 'Analyse my fridge'}
                 </button>
               )}
 
               <button
-                onClick={() => { setPhotos([]); setResult(null); setError(null); }}
+                onClick={() => { setPhotos([]); setError(null); }}
                 style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}
               >
                 Start over
@@ -689,47 +449,13 @@ export default function Home() {
 
           {loading && (
             <div style={{ textAlign: 'center', padding: '32px 0', color: T.muted, fontSize: 14 }}>
-              Scanning your refrigerator…
+              Looking at your shelves…
             </div>
           )}
 
           {error && (
             <div style={{ background: T.redSoft, color: T.red, padding: '12px 14px', borderRadius: 10, marginTop: 12, fontSize: 13 }}>
               {error}
-            </div>
-          )}
-
-          {result && (
-            <div style={{ marginTop: 22 }}>
-              <div style={{
-                borderLeft: `3px solid ${T.orange}`, background: T.orangeSoft,
-                padding: '12px 14px', borderRadius: '0 10px 10px 0',
-                fontSize: 14, color: T.inkSoft, marginBottom: 22, lineHeight: 1.5,
-              }}>
-                {result.summary}
-                {photos.length > 1 && (
-                  <span style={{ display: 'block', fontSize: 12, color: T.muted, marginTop: 6 }}>
-                    Read across {photos.length} photos
-                  </span>
-                )}
-              </div>
-
-              <Section items={result.order_now} configKey="order_now" />
-              <Section items={result.running_low} configKey="running_low" />
-              <Section items={result.stocked} configKey="stocked" />
-
-              {orderCount > 0 && (
-                <button
-                  onClick={() => {
-                    const items = [...(result.order_now || []), ...(result.running_low || [])];
-                    sessionStorage.setItem('inspector_pending_cart', JSON.stringify({ items, scanId: result.scan_id }));
-                    router.push('/cart');
-                  }}
-                  style={{ ...shell.successBtn, marginTop: 6 }}
-                >
-                  Order {orderCount} {orderCount === 1 ? 'item' : 'items'} on Instamart
-                </button>
-              )}
             </div>
           )}
         </main>
