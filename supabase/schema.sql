@@ -65,11 +65,16 @@ create table if not exists public.order_history (
   updated_at timestamptz not null default now()
 );
 
+-- Learned corrections: when automatic matching can't find something and the
+-- user resolves it via manual search, we remember the pick so the same
+-- spoken/scanned word matches directly next time instead of failing again.
+-- Both spinId and skuId are required — update_cart needs both to add an item.
 create table if not exists public.user_preferences (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
   item_query text not null,
   sku_id text not null,
+  spin_id text,
   brand text,
   product_name text,
   last_synced_at timestamptz not null default now(),

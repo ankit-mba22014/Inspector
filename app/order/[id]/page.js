@@ -286,9 +286,9 @@ export default function OrderTracking() {
                 </div>
               )}
 
-              {/* In development, show what Swiggy actually returned so response
-                  shapes can be confirmed rather than guessed at. */}
-              {tracking.raw && !rider && (
+              {/* Dev-only — the comment always said so, but nothing actually
+                  enforced it, so this rendered (collapsed) in production too. */}
+              {process.env.NODE_ENV === 'development' && tracking.raw && !rider && (
                 <details style={{ marginBottom: 14 }}>
                   <summary style={{
                     fontSize: 12, color: T.muted, cursor: 'pointer', padding: '8px 0',

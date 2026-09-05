@@ -24,19 +24,23 @@ export async function POST(req) {
     return NextResponse.json({ error: 'That recording was too long' }, { status: 400 });
   }
 
-  try {
-    const buffer = Buffer.from(await audio.arrayBuffer());
-    const data = await transcribeAudio(buffer, { mimeType: audio.type || 'audio/webm' });
-    const transcript = (data.transcript || '').trim();
+  const buffer = Buffer.from(await audio.arrayBuffer());
+  const mimeType = audio.type || 'audio/webm';
 
-    if (!transcript) {
-      // Not an error, just nothing usable — let the caller fall back
-      // rather than showing a hard failure for a quiet recording.
-      return NextResponse.json({ fallback: true }, { status: 200 });
-    }
-    return NextResponse.json({ transcript });
-  } catch (err) {
-    console.error('voice-transcribe error:', err);
+  // codemix keeps the native words (what the user actually said — feeds the
+  // "echo, don't translate" transcript and spokenAs). translate gives
+  // English directly, which lets voice-parse align instead of translating
+  // from scratch — moving that reasoning to Sarvam. Run in parallel: a
+  // failure in one shouldn't cost the other's result, and this keeps total
+  // latency close to a single call rather than doubling it.
+  const [codemixResult, translateResult] = await Promise.allSettled([
+    transcribeAudio(buffer, { mimeType, mode: 'codemix' }),
+    transcribeAudio(buffer, { mimeType, mode: 'translate' }),
+  ]);
+
+  if (codemixResult.status === 'rejected') {
+    const err = codemixResult.reason;
+    console.error('voice-transcribe error (codemix):', err);
     // Every failure path here — quota exhausted, still-overloaded after
     // retries, a genuine service error — means the same thing to the
     // frontend: stop trying Sarvam for this attempt, fall back.
@@ -45,4 +49,22 @@ export async function POST(req) {
       { status: 200 }
     );
   }
+
+  const transcript = (codemixResult.value.transcript || '').trim();
+  if (!transcript) {
+    // Not an error, just nothing usable — let the caller fall back
+    // rather than showing a hard failure for a quiet recording.
+    return NextResponse.json({ fallback: true }, { status: 200 });
+  }
+
+  // translate failing is not fatal — voice-parse falls back to translating
+  // the codemix transcript itself, exactly like before this change existed.
+  let translatedTranscript = null;
+  if (translateResult.status === 'fulfilled') {
+    translatedTranscript = (translateResult.value.transcript || '').trim() || null;
+  } else {
+    console.warn('voice-transcribe: translate mode failed, falling back to codemix-only:', translateResult.reason?.message);
+  }
+
+  return NextResponse.json({ transcript, translatedTranscript });
 }

@@ -83,7 +83,11 @@ export async function POST(req) {
   try {
     const data = await callClaude({
       model: 'claude-opus-4-5',
-      max_tokens: 1024,
+      // A busy fridge can produce a long order_now/running_low/stocked list —
+      // 1024 risked truncating the JSON mid-response on exactly those carts,
+      // which would fail JSON.parse the same way the voice-parse route's
+      // thinking-token budget did.
+      max_tokens: 4096,
       messages: [{
         role: 'user',
         content: [

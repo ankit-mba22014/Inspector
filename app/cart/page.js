@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { T, shell, responsiveCSS } from '../theme';
 import PaymentIcon from '@/components/PaymentIcon';
+import { useVoiceCapture } from '@/lib/useVoiceCapture';
 
 // Instamart's documented range for MCP checkout
 const MIN_ORDER = 99;
@@ -15,10 +16,17 @@ export default function CartPage() {
   const [selectedAddress, setSelectedAddress] = useState(null);
   const [showAddressPicker, setShowAddressPicker] = useState(false);
   const [pending, setPending] = useState(null);
-  const [missing, setMissing] = useState([]);
   const [mode, setMode] = useState(null);   // unknown until the first response
 
-  const [loading, setLoading] = useState(true);
+  // Progressive rows — one per pending item, resolved independently and in
+  // parallel. `cart` stays null until every row is terminal (matched or
+  // failed) and the one real Swiggy sync has happened; the whole address /
+  // bill / payment section below is already gated on `cart`, so it renders
+  // itself the moment resolution finishes without needing its own change.
+  const [rows, setRows] = useState([]);
+  const [rowMeta, setRowMeta] = useState({});   // skuId -> { spokenAs, inferred, chosenBecause }
+  const [transcriptDismissed, setTranscriptDismissed] = useState(false);
+
   const [updatingSku, setUpdatingSku] = useState(null);
   const [error, setError] = useState(null);
   const [warning, setWarning] = useState(null);
@@ -57,7 +65,7 @@ export default function CartPage() {
     if (!raw) { router.push('/'); return; }
     const parsed = JSON.parse(raw);
     setPending(parsed);
-    buildCart(parsed.items, null);
+    buildCartProgressive(parsed.items, null);
   }, []);
 
   // Android honours window.location.href to an app scheme even outside a
@@ -73,47 +81,107 @@ export default function CartPage() {
   // Cookies are sent automatically, so requests need no auth plumbing.
   const authHeaders = async () => ({ 'Content-Type': 'application/json' });
 
-  // ---- Build the initial cart from the scan ----
-  const buildCart = async (items, addressId) => {
-    setLoading(true);
+  /**
+   * Resolves every pending item independently and in parallel — each row
+   * fills in as soon as its own search returns, instead of the whole cart
+   * waiting on the slowest (or a failed) one. `cart` itself stays null until
+   * every row is terminal, which is also what the address/bill/payment
+   * section below is gated on — so that whole section renders itself the
+   * moment resolution finishes, with no separate "loading" flag needed.
+   */
+  const buildCartProgressive = async (items, addressId) => {
     setError(null);
-    try {
-      const headers = await authHeaders();
+    setCart(null);
+    // setSelectedAddress below only takes effect on the next render — this
+    // function keeps running against the closure it started with, so the
+    // final syncCart call needs its own always-current local, not React
+    // state (which would still read null/stale here).
+    let resolvedAddressId = addressId;
 
-      const searchRes = await fetch('/api/products/search', {
-        method: 'POST', headers,
-        body: JSON.stringify({ items: items.map((i) => i.name), addressId }),
-      });
-      const searchData = await searchRes.json();
-      if (!searchRes.ok) {
-        if (searchData.needsSwiggyAuth || searchRes.status === 401) setNeedsSwiggyAuth(true);
-        throw new Error(searchData.error);
+    const initialRows = items.map((item, i) => ({
+      key: `${item.name}-${i}-${Date.now()}`,
+      spokenAs: item.spokenAs || null,
+      requestedName: item.name,
+      quantityText: item.quantity || null,
+      emoji: item.emoji || null,
+      inferred: !!item.inferred,
+      stage: 'pending',   // pending | resolved | failed
+      product: null,
+      errorMsg: null,
+    }));
+    setRows(initialRows);
+
+    const headers = await authHeaders();
+
+    const results = await Promise.all(
+      items.map(async (item, i) => {
+        try {
+          const res = await fetch('/api/products/search', {
+            method: 'POST', headers,
+            body: JSON.stringify({ items: [{ name: item.name, spokenAs: item.spokenAs || null }], addressId }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            // A dead Swiggy session is a page-wide fact, not a per-row one —
+            // surface it the same way buildCart used to, alongside whatever
+            // per-row failure this item also gets below.
+            if (data.needsSwiggyAuth || res.status === 401) {
+              setNeedsSwiggyAuth(true);
+              setError(data.error || 'Your Swiggy session has ended');
+            }
+            throw new Error(data.error || 'Search failed');
+          }
+
+          setMode(data.mode);
+          if (data.addresses) setAddresses(data.addresses);
+          if (data.address) {
+            setSelectedAddress(data.address);
+            if (!resolvedAddressId) resolvedAddressId = data.address.id;
+          }
+
+          const r = data.resolved?.[0];
+          if (r?.found) {
+            const product = { ...r.product, quantity_count: 1 };
+            setRows((prev) => prev.map((row, idx) => (idx === i ? { ...row, stage: 'resolved', product } : row)));
+            return { item, product };
+          }
+
+          setRows((prev) => prev.map((row, idx) => (idx === i ? {
+            ...row, stage: 'failed', errorMsg: `Couldn't find ${item.name}`,
+          } : row)));
+          return { item, product: null };
+        } catch (err) {
+          setRows((prev) => prev.map((row, idx) => (idx === i ? {
+            ...row, stage: 'failed', errorMsg: err.message,
+          } : row)));
+          return { item, product: null };
+        }
+      })
+    );
+
+    const matched = results.filter((r) => r.product).map((r) => r.product);
+
+    const meta = {};
+    results.forEach((r) => {
+      if (r.product?.skuId) {
+        // chosenBecause isn't tracked here — syncCart already carries it
+        // through on the synced item itself (see the `reasons` map there).
+        meta[r.product.skuId] = {
+          spokenAs: r.item.spokenAs || null,
+          inferred: !!r.item.inferred,
+        };
       }
+    });
+    setRowMeta(meta);
 
-      setMode(searchData.mode);
-      if (searchData.addresses) setAddresses(searchData.addresses);
-      if (searchData.address) setSelectedAddress(searchData.address);
-      setMissing(searchData.resolved.filter((r) => !r.found).map((r) => r.query));
-
-      const found = searchData.resolved
-        .filter((r) => r.found)
-        .map((r) => ({ ...r.product, quantity_count: 1 }));
-
-      await syncCart(found, searchData.address?.id, headers, found);
-
-      // Fetch payment options as soon as the cart is known, unconditionally —
-      // the total is live, mutable state (items get added/removed after
-      // load), but the fetch itself doesn't depend on it. Gating this on the
-      // ₹99 minimum meant a cart that started below it never fetched, and
-      // nothing later ever retried, so crossing the threshold by adding
-      // items left the picker with no data to render. The ₹99/₹1000 range
-      // only controls what's DISPLAYED — see the render below — not whether
-      // this runs.
+    try {
+      await syncCart(matched, resolvedAddressId, headers, matched);
+      // Same unconditional fetch as before — the total is live, mutable
+      // state, but the fetch itself doesn't depend on it. See the render
+      // below for how the ₹99/₹1000 range controls what's DISPLAYED.
       loadPaymentOptions();
     } catch (err) {
       setError(err.message);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -165,9 +233,9 @@ export default function CartPage() {
   };
 
   // ---- Add an item the scan missed ----
-  const runSearch = async (e) => {
+  const runSearch = async (e, queryOverride) => {
     e?.preventDefault?.();
-    const q = searchQuery.trim();
+    const q = (queryOverride ?? searchQuery).trim();
     if (q.length < 2) return;
     setSearching(true);
     try {
@@ -187,6 +255,24 @@ export default function CartPage() {
     }
   };
 
+  // Set only when the search box was opened to resolve a failed automatic
+  // match (openSearchForRow below) — tells addProduct to remember the pick
+  // via /api/products/learn. Left null for the ordinary "+ Add another
+  // item" flow, since that's a genuinely new item, not a correction.
+  const [teachingQuery, setTeachingQuery] = useState(null);
+
+  // A row that couldn't be matched automatically — dismiss the placeholder
+  // and hand off to the same manual search used for "+ Add another item",
+  // pre-filled with what was actually said/detected for that item.
+  const openSearchForRow = (row) => {
+    const q = row.spokenAs || row.requestedName;
+    setRows((prev) => prev.filter((r) => r.key !== row.key));
+    setSearchOpen(true);
+    setSearchQuery(q);
+    setTeachingQuery(q);
+    runSearch(null, q);
+  };
+
   const addProduct = async (product) => {
     setUpdatingSku(product.skuId);
     try {
@@ -199,15 +285,100 @@ export default function CartPage() {
         : [...existing, { ...product, quantity_count: 1 }];
 
       await syncCart(next);
+
+      if (teachingQuery && product.skuId && product.spinId) {
+        // Best-effort — a failed save here shouldn't block adding the item.
+        fetch('/api/products/learn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: teachingQuery, product }),
+        }).catch(() => {});
+      }
+
       setSearchQuery('');
       setSearchResults(null);
       setSearchOpen(false);
+      setTeachingQuery(null);
     } catch (err) {
       setWarning(err.message);
     } finally {
       setUpdatingSku(null);
     }
   };
+
+  // ---- Add a missing item by voice ----
+  // Same idea as the search box above, just spoken instead of typed — one or
+  // more items get parsed from the transcript, resolved, and merged into the
+  // existing cart in a single sync (never a delta, per update_cart's
+  // replace-whole-cart semantics).
+  const [voiceAddState, setVoiceAddState] = useState('idle');   // idle | working
+  const [voiceAddNotice, setVoiceAddNotice] = useState(null);
+
+  const handleVoiceAddTranscript = async (text, translatedText) => {
+    setVoiceAddState('working');
+    setVoiceAddNotice(null);
+    try {
+      const headers = await authHeaders();
+      const parseRes = await fetch('/api/voice-parse', {
+        method: 'POST', headers,
+        body: JSON.stringify({ transcript: text, translatedTranscript: translatedText || undefined }),
+      });
+      const parseData = await parseRes.json();
+      if (parseRes.status === 401) {
+        setNeedsSwiggyAuth(true);
+        setError(parseData.error || 'Your Swiggy session has ended');
+        return;
+      }
+      if (!parseRes.ok) throw new Error(parseData.error || 'Something went wrong');
+
+      if (!parseData.items?.length) {
+        cartVoice.reportError("Didn't catch that — say it again?");
+        return;
+      }
+
+      const searchResults = await Promise.all(
+        parseData.items.map(async (item) => {
+          try {
+            const res = await fetch('/api/products/search', {
+              method: 'POST', headers,
+              body: JSON.stringify({ items: [{ name: item.name, spokenAs: item.spokenAs || null }], addressId: selectedAddress?.id }),
+            });
+            const data = await res.json();
+            const r = data.resolved?.[0];
+            return r?.found ? { item, product: r.product } : { item, product: null };
+          } catch {
+            return { item, product: null };
+          }
+        })
+      );
+
+      let next = cart?.items || [];
+      const newMeta = {};
+      const notFound = [];
+
+      searchResults.forEach(({ item, product }) => {
+        if (!product) { notFound.push(item.spokenAs || item.name); return; }
+        const already = next.find((i) => i.skuId === product.skuId);
+        next = already
+          ? next.map((i) => (i.skuId === product.skuId ? { ...i, quantity_count: i.quantity_count + 1 } : i))
+          : [...next, { ...product, quantity_count: 1 }];
+        if (product.skuId) newMeta[product.skuId] = { spokenAs: item.spokenAs || null, inferred: false };
+      });
+
+      await syncCart(next);
+      setRowMeta((prev) => ({ ...prev, ...newMeta }));
+
+      if (notFound.length > 0) {
+        setVoiceAddNotice(`Couldn't find ${notFound.join(', ')} — try the search box for ${notFound.length === 1 ? 'it' : 'them'}.`);
+      }
+    } catch (err) {
+      cartVoice.reportError(err.message);
+    } finally {
+      setVoiceAddState('idle');
+    }
+  };
+
+  const cartVoice = useVoiceCapture({ router, onTranscript: handleVoiceAddTranscript });
 
   // ---- Address ----
   const changeAddress = (addr) => {
@@ -218,7 +389,7 @@ export default function CartPage() {
     setPayment(null);
     setSelectedPayment(null);
     setPaymentError(null);
-    if (pending) buildCart(pending.items, addr.id);
+    if (pending) buildCartProgressive(pending.items, addr.id);
   };
 
   // ---- Payment ----
@@ -455,7 +626,7 @@ export default function CartPage() {
           <div>
             <h1 style={shell.brand}>Your cart</h1>
             <p style={shell.tagline}>
-              {mode === null
+              {!cart
                 ? 'Checking Instamart…'
                 : mode === 'mock'
                   ? 'Sample data — sign in to Swiggy for live prices'
@@ -466,6 +637,51 @@ export default function CartPage() {
         </header>
 
         <main style={shell.body}>
+          {!awaiting && pending?.transcript && !transcriptDismissed && (
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: 8,
+              background: T.orangeSoft, borderRadius: 10,
+              padding: '10px 12px', marginBottom: 16,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 12, color: T.orangeDeep, lineHeight: 1.5, margin: '0 0 8px' }}>
+                  You said: <span style={{ fontStyle: 'italic' }}>&ldquo;{pending.transcript}&rdquo;</span>
+                </p>
+                <button
+                  onClick={() => {
+                    // A sessionStorage flag, not a ?rerecord=1 URL param —
+                    // a URL query + history.replaceState left a stale
+                    // history entry that the browser's own back button
+                    // could restore, re-triggering recording on a plain
+                    // back-navigation instead of just leaving the page.
+                    // This flag gets consumed (removed) the moment the home
+                    // page reads it, so no history state can ever replay it.
+                    sessionStorage.setItem('inspector_auto_rerecord', '1');
+                    router.push('/');
+                  }}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    background: '#fff', border: `1px solid ${T.orange}`, borderRadius: 999,
+                    padding: '5px 12px', fontSize: 12, fontWeight: 700, color: T.orangeDeep,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  🎤 Re-record
+                </button>
+              </div>
+              <button
+                onClick={() => setTranscriptDismissed(true)}
+                aria-label="Dismiss"
+                style={{
+                  flexShrink: 0, background: 'none', border: 'none', color: T.orangeDeep,
+                  fontSize: 16, cursor: 'pointer', padding: '0 2px', fontFamily: 'inherit', lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </div>
+          )}
+
           {awaiting ? (
             <div style={{ textAlign: 'center', padding: '4px 0' }}>
               {(() => {
@@ -598,12 +814,6 @@ export default function CartPage() {
             </div>
           )}
 
-          {loading && (
-            <div style={{ textAlign: 'center', padding: '40px 0', color: T.muted, fontSize: 14 }}>
-              Finding your items on Instamart…
-            </div>
-          )}
-
           {error && (
             needsSwiggyAuth ? (
               <div style={{ background: T.amberSoft, borderRadius: 12, padding: 16, marginBottom: 16 }}>
@@ -634,8 +844,7 @@ export default function CartPage() {
             </div>
           )}
 
-          {!loading && (
-            <>
+          <>
               {/* Address */}
               {selectedAddress && (
                 <div style={{ marginBottom: 18 }}>
@@ -694,12 +903,30 @@ export default function CartPage() {
                 </div>
               )}
 
-              {/* Items */}
-              {items.length > 0 ? (
+              {/* Items — one clean reveal: a single loading state while every
+                  item resolves in the background, then the finished cart
+                  shown once, fully formed. Resolution itself still runs in
+                  parallel per item (buildCartProgressive) — only the UI
+                  stopped showing it happen row by row, since a jump between
+                  "everything pending" and "everything resolved" read as a
+                  jarring screen swap rather than a smooth fill-in. */}
+              {!cart ? (
+                <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                  <span style={{
+                    width: 10, height: 10, borderRadius: '50%', background: T.orange,
+                    display: 'inline-block', animation: 'insPulse 1.2s ease-in-out infinite', marginBottom: 14,
+                  }} />
+                  <style>{`@keyframes insPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }`}</style>
+                  <p style={{ fontSize: 13, color: T.muted, margin: 0 }}>
+                    Finding {rows.map((r) => r.spokenAs || r.requestedName).join(', ')} on Instamart…
+                  </p>
+                </div>
+              ) : items.length > 0 ? (
                 <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 14, padding: '0 14px', marginBottom: 14 }}>
                   {items.map((item, i) => {
                     const busy = updatingSku === item.skuId;
                     const atMax = item.maxQuantity != null && item.quantity_count >= item.maxQuantity;
+                    const meta = rowMeta[item.skuId];
                     return (
                       <div key={item.skuId || i} style={{
                         display: 'flex', alignItems: 'center', gap: 12, padding: '14px 0',
@@ -710,7 +937,12 @@ export default function CartPage() {
                           <img src={item.imageUrl} alt="" style={{ width: 46, height: 46, objectFit: 'contain', borderRadius: 8, flexShrink: 0 }} />
                         )}
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 14, fontWeight: 500, color: T.ink, lineHeight: 1.3 }}>{item.name}</div>
+                          <div style={{ fontSize: 14, fontWeight: 500, color: T.ink, lineHeight: 1.3 }}>
+                            {meta?.spokenAs && (
+                              <span style={{ color: T.muted, fontWeight: 400 }}>{meta.spokenAs} → </span>
+                            )}
+                            {item.name}
+                          </div>
                           <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>
                             {item.quantity}
                             {item.mrp && item.mrp > item.price && (
@@ -719,6 +951,9 @@ export default function CartPage() {
                           </div>
                           {item.chosenBecause && (
                             <div style={{ fontSize: 11, color: T.green, marginTop: 3 }}>{item.chosenBecause}</div>
+                          )}
+                          {meta?.inferred && (
+                            <div style={{ fontSize: 11, color: T.amber, marginTop: 3 }}>looked low</div>
                           )}
                         </div>
 
@@ -758,25 +993,92 @@ export default function CartPage() {
                 </div>
               )}
 
-              {missing.length > 0 && (
-                <div style={{ fontSize: 12, color: T.muted, marginBottom: 12, lineHeight: 1.5 }}>
-                  Couldn't match on Instamart: {missing.join(', ')} — search for them below.
+              {/* Anything that didn't match automatically — shown once,
+                  alongside the finished cart, not as a row that flashed by
+                  during loading. */}
+              {cart && rows.some((r) => r.stage === 'failed') && (
+                <div style={{ marginBottom: 14 }}>
+                  {rows.filter((r) => r.stage === 'failed').map((row) => (
+                    <button
+                      key={row.key}
+                      onClick={() => openSearchForRow(row)}
+                      style={{
+                        display: 'block', width: '100%', textAlign: 'left', background: 'none',
+                        border: 'none', padding: '6px 0', cursor: 'pointer', fontFamily: 'inherit',
+                      }}
+                    >
+                      <span style={{ fontSize: 13, color: T.red }}>
+                        Couldn&apos;t find {row.spokenAs || row.requestedName}
+                      </span>
+                      <span style={{ fontSize: 12, color: T.orange, fontWeight: 700 }}> · tap to search</span>
+                    </button>
+                  ))}
                 </div>
               )}
 
-              {/* Add an item */}
+              {/* Add an item — only once the initial resolution pass has
+                  finished; adding earlier would race the final sync that
+                  fires once every progressive row is terminal. */}
+              {cart && (
               <div style={{ marginBottom: 18 }}>
-                {!searchOpen ? (
-                  <button
-                    onClick={() => setSearchOpen(true)}
-                    style={{
-                      width: '100%', background: '#fff', border: `1.5px dashed ${T.hairline}`,
-                      borderRadius: 12, padding: '13px', fontSize: 14, fontWeight: 600,
-                      color: T.orange, cursor: 'pointer', fontFamily: 'inherit',
-                    }}
-                  >
-                    + Add another item
-                  </button>
+                {!searchOpen && cartVoice.voiceState === 'idle' && voiceAddState === 'idle' ? (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      onClick={() => setSearchOpen(true)}
+                      style={{
+                        flex: 1, background: '#fff', border: `1.5px dashed ${T.hairline}`,
+                        borderRadius: 12, padding: '13px', fontSize: 14, fontWeight: 600,
+                        color: T.orange, cursor: 'pointer', fontFamily: 'inherit',
+                      }}
+                    >
+                      + Add another item
+                    </button>
+                    {cartVoice.voiceSupported && (
+                      <button
+                        onClick={() => cartVoice.startRecording()}
+                        aria-label="Add an item by voice"
+                        style={{
+                          flexShrink: 0, width: 48, background: '#fff',
+                          border: `1.5px dashed ${T.hairline}`, borderRadius: 12,
+                          fontSize: 18, cursor: 'pointer', fontFamily: 'inherit',
+                        }}
+                      >
+                        🎤
+                      </button>
+                    )}
+                  </div>
+                ) : cartVoice.voiceState !== 'idle' || voiceAddState === 'working' ? (
+                  <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 14, textAlign: 'center' }}>
+                    {voiceAddState === 'working' ? (
+                      <p style={{ fontSize: 13, color: T.muted, margin: 0 }}>
+                        Adding {cartVoice.transcript ? `"${cartVoice.transcript}"` : '…'}
+                      </p>
+                    ) : cartVoice.voiceState === 'error' ? (
+                      <>
+                        <p style={{ fontSize: 13, color: T.red, margin: '0 0 10px' }}>{cartVoice.voiceError}</p>
+                        <button onClick={cartVoice.resetVoice} style={{ ...shell.ghostBtn, padding: '8px 16px' }}>
+                          Dismiss
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: T.ink, margin: '0 0 8px' }}>
+                          {cartVoice.voiceState === 'transcribing' ? 'Listening…' : (cartVoice.transcript || 'Listening…')}
+                        </p>
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                          <button
+                            onClick={() => (cartVoice.voiceState === 'listening' ? cartVoice.stopListening() : cartVoice.stopRecording())}
+                            style={{ ...shell.ghostBtn, padding: '8px 16px', color: T.orange, borderColor: T.orange }}
+                          >
+                            Done
+                          </button>
+                          <button onClick={cartVoice.resetVoice} style={{ ...shell.ghostBtn, padding: '8px 16px' }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 ) : (
                   <div style={{ border: `1px solid ${T.hairline}`, borderRadius: 12, padding: 14 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -784,7 +1086,7 @@ export default function CartPage() {
                         Add an item
                       </span>
                       <button
-                        onClick={() => { setSearchOpen(false); setSearchResults(null); setSearchQuery(''); }}
+                        onClick={() => { setSearchOpen(false); setSearchResults(null); setSearchQuery(''); setTeachingQuery(null); }}
                         style={{ background: 'none', border: 'none', color: T.muted, fontSize: 13, cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
                       >
                         Close
@@ -855,7 +1157,11 @@ export default function CartPage() {
                     )}
                   </div>
                 )}
+                {voiceAddNotice && (
+                  <p style={{ fontSize: 12, color: T.muted, marginTop: 8, lineHeight: 1.5 }}>{voiceAddNotice}</p>
+                )}
               </div>
+              )}
 
               {/* Bill */}
               {lineItems.length > 0 && (
@@ -1164,8 +1470,7 @@ export default function CartPage() {
                   )}
                 </>
               )}
-            </>
-          )}
+          </>
           </>
           )}
         </main>

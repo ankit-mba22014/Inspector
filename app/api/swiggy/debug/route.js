@@ -10,6 +10,11 @@ import { callMCPTool, listTools } from '@/lib/swiggy/mcp';
  *   /api/swiggy/debug?tool=__list__          (enumerates every available tool)
  */
 export async function GET(req) {
+  // 404, not 401/403 — don't even reveal this endpoint exists in production.
+  if (process.env.NODE_ENV !== 'development') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 

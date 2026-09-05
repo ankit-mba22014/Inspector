@@ -170,10 +170,14 @@ export async function GET(req, { params }) {
     // statusText is a plain string now; pollingIntervalSeconds === -1 is Swiggy
     // telling us the order is finished and polling should stop.
     const statusText = tracking?.statusText || delivery?.statusText || '';
+    // Word-boundary, past-tense only — "deliver"/"delivery" appears in
+    // perfectly normal in-progress statuses too ("Order out for delivery",
+    // "Delivery partner is on the way"), and a bare substring match against
+    // those was flagging orders as delivered while still in transit.
     const delivered =
-      delivery?.delivered === true || /deliver/i.test(statusText);
+      delivery?.delivered === true || /\bdelivered\b/i.test(statusText);
     const cancelled =
-      delivery?.cancelled === true || /cancel/i.test(statusText);
+      delivery?.cancelled === true || /\bcancelled\b/i.test(statusText);
     const terminal = delivered || cancelled || tracking?.isTerminal === true;
 
     if (delivered || cancelled) {
