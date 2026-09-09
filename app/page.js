@@ -9,6 +9,37 @@ import { useVoiceCapture } from '@/lib/useVoiceCapture';
 // extra cost and wait don't buy much accuracy.
 const MAX_PHOTOS = 2;
 
+// Home-screen-only accents — kept local rather than in theme.js so the
+// restyle doesn't ripple into cart/orders/welcome, which share that file.
+const GRADIENT_SCAN = 'linear-gradient(135deg, #FC8019 0%, #FF5C7A 100%)';
+const GRADIENT_VOICE = 'linear-gradient(135deg, #7C5CFC 0%, #FC8019 100%)';
+
+const HOME_KEYFRAMES = `
+  @keyframes ins-float { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-6px) } }
+  @keyframes ins-pop-in { from { opacity: 0; transform: scale(0.92) } to { opacity: 1; transform: scale(1) } }
+  @keyframes ins-bounce-dot { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.5 } 40% { transform: scale(1); opacity: 1 } }
+  @keyframes ins-wave { 0%, 100% { transform: scaleY(0.35) } 50% { transform: scaleY(1) } }
+
+  .ins-home-tile { transition: transform 0.15s ease; }
+  .ins-home-tile:active { transform: scale(0.96); }
+  .ins-home-btn { transition: transform 0.15s ease; }
+  .ins-home-btn:active { transform: scale(0.95); }
+  .ins-home-icon-float { animation: ins-float 2.6s ease-in-out infinite; }
+  .ins-home-photo { animation: ins-pop-in 0.22s ease; }
+  .ins-home-dots { display: inline-flex; gap: 5px; align-items: center; }
+  .ins-home-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: ${'#FC8019'};
+    animation: ins-bounce-dot 1.1s ease-in-out infinite;
+  }
+  .ins-home-dot:nth-child(2) { animation-delay: 0.15s; background: #E8640C; }
+  .ins-home-dot:nth-child(3) { animation-delay: 0.3s; background: #7C5CFC; }
+  .ins-home-wave { display: inline-flex; gap: 3px; align-items: center; height: 20px; }
+  .ins-home-bar {
+    width: 4px; border-radius: 2px; background: #fff;
+    animation: ins-wave 0.9s ease-in-out infinite;
+  }
+`;
+
 export default function Home() {
   const [me, setMe] = useState(null);
   const [photos, setPhotos] = useState([]);      // { dataUrl, base64 }
@@ -197,12 +228,20 @@ export default function Home() {
   return (
     <div style={shell.page} className="ins-page">
       <style>{responsiveCSS}</style>
+      <style>{HOME_KEYFRAMES}</style>
       <div style={shell.card} className="ins-card">
 
         <header style={shell.header}>
-          <div>
-            <h1 style={shell.brand}>Inspector</h1>
-            <p style={shell.tagline}>Scan your fridge. Order what&apos;s missing.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 34, height: 34, borderRadius: 10, background: GRADIENT_SCAN,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 16, flexShrink: 0,
+            }}>📷</div>
+            <div>
+              <h1 style={{ ...shell.brand, fontWeight: 800, letterSpacing: '-0.5px' }}>Inspector</h1>
+              <p style={shell.tagline}>Scan your fridge. Order what&apos;s missing.</p>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
             <button onClick={() => router.push('/orders')} style={shell.ghostBtn}>Orders</button>
@@ -233,11 +272,15 @@ export default function Home() {
               {voiceState === 'recording' && (
                 <>
                   <div style={{
-                    width: 54, height: 54, borderRadius: '50%', background: T.orangeSoft,
+                    width: 64, height: 64, borderRadius: '50%', background: GRADIENT_VOICE,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    margin: '0 auto 16px', fontSize: 24,
+                    margin: '0 auto 16px', boxShadow: '0 8px 20px rgba(124,92,252,0.35)',
                   }}>
-                    <span style={{ animation: 'insPulse 1.2s ease-in-out infinite' }}>🎤</span>
+                    <span className="ins-home-wave">
+                      {[0, 1, 2, 3].map((i) => (
+                        <span key={i} className="ins-home-bar" style={{ height: 10 + (i % 2) * 8, animationDelay: `${i * 0.12}s` }} />
+                      ))}
+                    </span>
                   </div>
                   <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 4px' }}>
                     Listening…
@@ -245,9 +288,8 @@ export default function Home() {
                   <p style={{ color: T.muted, fontSize: 14, lineHeight: 1.5, margin: '0 0 20px', padding: '0 8px' }}>
                     Say what you need — "add milk, onions and two kilos of tomatoes"
                   </p>
-                  <style>{`@keyframes insPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }`}</style>
-                  <button onClick={stopRecording} style={shell.primaryBtn}>Done</button>
-                  <button onClick={handleReset} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                  <button onClick={stopRecording} className="ins-home-btn" style={{ ...shell.primaryBtn, background: GRADIENT_VOICE }}>Done</button>
+                  <button onClick={handleReset} className="ins-home-btn" style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
                     Cancel
                   </button>
                 </>
@@ -255,21 +297,26 @@ export default function Home() {
 
               {voiceState === 'transcribing' && (
                 <div style={{ padding: '48px 0' }}>
-                  <span style={{
-                    width: 10, height: 10, borderRadius: '50%', background: T.orange,
-                    display: 'inline-block', animation: 'insPulse 1.2s ease-in-out infinite',
-                  }} />
+                  <span className="ins-home-dots">
+                    <span className="ins-home-dot" />
+                    <span className="ins-home-dot" />
+                    <span className="ins-home-dot" />
+                  </span>
                 </div>
               )}
 
               {voiceState === 'listening' && (
                 <>
                   <div style={{
-                    width: 54, height: 54, borderRadius: '50%', background: T.orangeSoft,
+                    width: 64, height: 64, borderRadius: '50%', background: GRADIENT_VOICE,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    margin: '0 auto 16px', fontSize: 24,
+                    margin: '0 auto 16px', boxShadow: '0 8px 20px rgba(124,92,252,0.35)',
                   }}>
-                    <span style={{ animation: 'insPulse 1.2s ease-in-out infinite' }}>🎤</span>
+                    <span className="ins-home-wave">
+                      {[0, 1, 2, 3].map((i) => (
+                        <span key={i} className="ins-home-bar" style={{ height: 10 + (i % 2) * 8, animationDelay: `${i * 0.12}s` }} />
+                      ))}
+                    </span>
                   </div>
                   <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 4px' }}>
                     Listening…
@@ -285,9 +332,8 @@ export default function Home() {
                   }}>
                     {transcript || 'Say what you need — "add milk, onions and two kilos of tomatoes"'}
                   </p>
-                  <style>{`@keyframes insPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }`}</style>
-                  <button onClick={stopListening} style={shell.primaryBtn}>Done</button>
-                  <button onClick={handleReset} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                  <button onClick={stopListening} className="ins-home-btn" style={{ ...shell.primaryBtn, background: GRADIENT_VOICE }}>Done</button>
+                  <button onClick={handleReset} className="ins-home-btn" style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
                     Cancel
                   </button>
                 </>
@@ -295,9 +341,14 @@ export default function Home() {
 
               {parsing && (
                 <div style={{ padding: '20px 8px' }}>
-                  <p style={{ color: T.inkSoft, fontSize: 15, lineHeight: 1.6, fontStyle: 'italic' }}>
+                  <p style={{ color: T.inkSoft, fontSize: 15, lineHeight: 1.6, fontStyle: 'italic', margin: '0 0 16px' }}>
                     "{transcript}"
                   </p>
+                  <span className="ins-home-dots">
+                    <span className="ins-home-dot" />
+                    <span className="ins-home-dot" />
+                    <span className="ins-home-dot" />
+                  </span>
                 </div>
               )}
 
@@ -306,76 +357,90 @@ export default function Home() {
                   <div style={{ background: T.redSoft, color: T.red, padding: '12px 14px', borderRadius: 10, marginBottom: 16, fontSize: 13, lineHeight: 1.5, textAlign: 'left' }}>
                     {voiceError}
                   </div>
-                  <button onClick={startRecording} style={shell.primaryBtn}>Try again</button>
-                  <button onClick={handleReset} style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
+                  <button onClick={startRecording} className="ins-home-btn" style={shell.primaryBtn}>Try again</button>
+                  <button onClick={handleReset} className="ins-home-btn" style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}>
                     Back to scan
                   </button>
                 </>
               )}
             </div>
           ) : photos.length === 0 ? (
-            <>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: voiceSupported ? '1fr 1fr' : '1fr',
+              gap: 12,
+            }}>
               <div
                 onClick={openCamera}
+                className="ins-home-tile"
                 style={{
-                  border: `1.5px dashed ${T.hairline}`, borderRadius: 14,
-                  padding: '44px 20px', textAlign: 'center', cursor: 'pointer',
+                  background: GRADIENT_SCAN, borderRadius: 20, padding: '28px 14px',
+                  textAlign: 'center', cursor: 'pointer', color: '#fff',
+                  boxShadow: '0 10px 24px rgba(252,128,25,0.28)',
+                  display: 'flex', flexDirection: 'column', justifyContent: 'center',
+                  minHeight: 190,
                 }}
               >
-                <div style={{
-                  width: 52, height: 52, borderRadius: '50%', background: T.orangeSoft,
+                <div className="ins-home-icon-float" style={{
+                  width: 50, height: 50, borderRadius: '50%', background: 'rgba(255,255,255,0.22)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  margin: '0 auto 14px', fontSize: 24,
+                  margin: '0 auto 14px', fontSize: 22,
                 }}>📷</div>
-                <p style={{ fontWeight: 700, fontSize: 16, color: T.ink, margin: '0 0 4px' }}>
+                <p style={{ fontWeight: 800, fontSize: 15, margin: '0 0 4px' }}>
                   Scan your fridge
                 </p>
-                <p style={{ color: T.muted, fontSize: 13, margin: '0 0 18px', lineHeight: 1.5 }}>
+                <p style={{ color: 'rgba(255,255,255,0.88)', fontSize: 12, margin: '0 0 16px', lineHeight: 1.4 }}>
                   {isMobile
                     ? 'Take a photo of your fridge or shelves'
                     : 'Photograph your fridge, shelves, or storage'}
                 </p>
-                <span style={{
-                  display: 'inline-block', background: T.orange, color: '#fff',
-                  padding: '11px 26px', borderRadius: 10, fontSize: 14, fontWeight: 700,
+                <span className="ins-home-btn" style={{
+                  display: 'inline-block', background: 'rgba(255,255,255,0.95)', color: T.orangeDeep,
+                  padding: '10px 18px', borderRadius: 10, fontSize: 13, fontWeight: 700,
                 }}>
                   {isMobile ? 'Take photo' : 'Choose photo'}
                 </span>
               </div>
 
               {voiceSupported && (
-                <>
-                  <div style={{ textAlign: 'center', color: T.muted, fontSize: 12, margin: '16px 0' }}>or</div>
-                  <button
-                    onClick={startRecording}
-                    style={{
-                      width: '100%', background: '#fff', color: T.orange,
-                      border: `1.5px solid ${T.orange}`, borderRadius: 10,
-                      padding: '13px', fontSize: 14, fontWeight: 700,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                    }}
-                  >
-                    🎤 Speak to order
-                  </button>
-                </>
+                <button
+                  onClick={startRecording}
+                  className="ins-home-tile ins-home-btn"
+                  style={{
+                    background: GRADIENT_VOICE, borderRadius: 20, padding: '28px 14px',
+                    textAlign: 'center', cursor: 'pointer', color: '#fff', border: 'none',
+                    fontFamily: 'inherit', boxShadow: '0 10px 24px rgba(124,92,252,0.28)',
+                    display: 'flex', flexDirection: 'column', justifyContent: 'center',
+                    minHeight: 190,
+                  }}
+                >
+                  <div style={{
+                    width: 50, height: 50, borderRadius: '50%', background: 'rgba(255,255,255,0.22)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    margin: '0 auto 14px', fontSize: 22,
+                  }}>🎤</div>
+                  <p style={{ fontWeight: 800, fontSize: 15, margin: 0 }}>Speak to order</p>
+                </button>
               )}
-            </>
+            </div>
           ) : (
             <>
               <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
                 {photos.map((p, i) => (
-                  <div key={i} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+                  <div key={i} className="ins-home-photo" style={{ position: 'relative', flex: 1, minWidth: 0 }}>
                     <img
                       src={p.dataUrl}
                       alt={`Photo ${i + 1} of your kitchen`}
                       style={{
                         width: '100%', aspectRatio: '3 / 4', objectFit: 'cover',
-                        borderRadius: 12, border: `1px solid ${T.hairline}`, display: 'block',
+                        borderRadius: 16, border: `1px solid ${T.hairline}`, display: 'block',
+                        boxShadow: '0 6px 16px rgba(0,0,0,0.10)',
                       }}
                     />
                     <button
                       onClick={() => removePhoto(i)}
                       aria-label={`Remove photo ${i + 1}`}
+                      className="ins-home-btn"
                       style={{
                         position: 'absolute', top: 6, right: 6,
                         width: 26, height: 26, borderRadius: '50%',
@@ -401,15 +466,16 @@ export default function Home() {
                 {photos.length < MAX_PHOTOS && (
                   <button
                     onClick={openCamera}
+                    className="ins-home-tile"
                     style={{
-                      flex: 1, aspectRatio: '3 / 4', borderRadius: 12,
-                      border: `1.5px dashed ${T.hairline}`, background: '#fff',
+                      flex: 1, aspectRatio: '3 / 4', borderRadius: 16,
+                      border: `1.5px dashed ${T.orange}`, background: T.orangeSoft,
                       cursor: 'pointer', display: 'flex', flexDirection: 'column',
                       alignItems: 'center', justifyContent: 'center', gap: 6,
-                      fontFamily: 'inherit', color: T.orange,
+                      fontFamily: 'inherit', color: T.orangeDeep,
                     }}
                   >
-                    <span style={{ fontSize: 22 }}>+</span>
+                    <span className="ins-home-icon-float" style={{ fontSize: 22 }}>+</span>
                     <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3, padding: '0 8px' }}>
                       Add another angle
                     </span>
@@ -424,13 +490,14 @@ export default function Home() {
               </p>
 
               {!loading && (
-                <button onClick={analyse} style={shell.primaryBtn}>
+                <button onClick={analyse} className="ins-home-btn" style={{ ...shell.primaryBtn, background: GRADIENT_SCAN, boxShadow: '0 10px 24px rgba(252,128,25,0.3)' }}>
                   {photos.length > 1 ? 'Analyse both photos' : 'Analyse my fridge'}
                 </button>
               )}
 
               <button
                 onClick={() => { setPhotos([]); setError(null); }}
+                className="ins-home-btn"
                 style={{ ...shell.ghostBtn, width: '100%', marginTop: 8, padding: '11px' }}
               >
                 Start over
@@ -449,6 +516,11 @@ export default function Home() {
 
           {loading && (
             <div style={{ textAlign: 'center', padding: '32px 0', color: T.muted, fontSize: 14 }}>
+              <div className="ins-home-dots" style={{ justifyContent: 'center', marginBottom: 14, width: '100%' }}>
+                <span className="ins-home-dot" />
+                <span className="ins-home-dot" />
+                <span className="ins-home-dot" />
+              </div>
               Looking at your shelves…
             </div>
           )}
