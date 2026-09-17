@@ -1,6 +1,8 @@
 # Inspector
 
-Photograph your fridge. Order what's missing on Swiggy Instamart.
+Photograph your fridge or Just say what you want. Order what's missing on Swiggy Instamart.
+
+https://inspector-azure.vercel.app/
 
 Built on the [Swiggy MCP Builders Club](https://mcp.swiggy.com/builders/).
 
